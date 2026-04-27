@@ -1,2 +1,3 @@
 gdown
 sentence_transformer
+fastapi uvicorn python-dotenv requests openai
