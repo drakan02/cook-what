@@ -12,3 +12,4 @@ data/embeddings/ids.json
 chroma_db/
 
 __pycache__/
+.env
