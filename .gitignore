@@ -1,5 +1,5 @@
 .vscode/
-
+.venv/
 *.log
 
 data/data.jsonl
@@ -12,3 +12,4 @@ data/embeddings/ids.json
 chroma_db/
 
 __pycache__/
+.env

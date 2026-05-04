@@ -1,2 +1,9 @@
 gdown
-sentence_transformer
+sentence-transformers
+fastapi
+uvicorn
+python-dotenv
+requests
+openai
+chromadb
+psycopg[binary]
