@@ -1,3 +1,9 @@
 gdown
 sentence-transformers
-fastapi uvicorn python-dotenv requests openai
+fastapi
+uvicorn
+python-dotenv
+requests
+openai
+chromadb
+psycopg[binary]

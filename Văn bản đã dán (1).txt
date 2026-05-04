@@ -1,0 +1,242 @@
+Theo bảng so sánh hiệu năng thực tế, khi chạy mô hình ResNet-200, Pascal Titan X nhanh hơn CPU Intel E5-2620 v3 bao nhiêu lần?
+(1 Point)
+
+
+64x
+
+66x
+
+71x
+
+76x
+4.Thiết bị biên Google Coral thuộc nhóm sản phẩm nào?
+(1 Point)
+
+
+Máy chủ hiệu năng cao
+
+Thiết bị biên (Edge device)
+
+Bộ vi xử lý đồ họa cho máy tính để bàn
+
+Nền tảng lưu trữ đám mây
+5.Nếu bạn phải thiết kế một hệ thống nhận diện vật thể thời gian thực chạy trên drone với ngân sách phần cứng cực thấp và yêu cầu tiết kiệm điện, lựa chọn nào là hợp lý nhất (chỉ xét các thiết bị đã học trên lớp)?
+(1 Point)
+
+
+Jetson Nano (Kiến trúc Maxwell, 128 nhân CUDA, giá 129 USD)
+
+NVIDIA DGX-2 (16 GPU Tesla V100, 1.5 TB System Memory)
+
+NVIDIA TITAN V (Giá 2999 USD)
+
+Jetson AGX Xavier Series (Giá 599 USD)
+6.Thiết bị biên (edge device) nào của NVIDIA có giá khởi điểm thấp nhất (129 USD) và sử dụng kiến trúc Maxwell?
+(1 Point)
+
+
+Jetson TX2 Series
+
+Jetson Nano
+
+Jetson Xavier
+
+Jetson AGX Xavier Series
+7.Tại sao việc sử dụng thư viện tối ưu như cuDNN 5.1 lại giúp Pascal Titan X chạy nhanh hơn đáng kể so với khi không dùng (no cuDNN) trên cùng một mô hình?
+(1 Point)
+
+
+Vì cuDNN tự động tăng số lượng nhân CUDA có sẵn trên phần cứng
+
+Vì cuDNN là lớp phần mềm tối ưu hóa cách thức thực hiện các phép toán học sâu trên kiến trúc song song của GPU, giúp giảm thời gian thực hiện cả bước Forward và Backward
+
+Vì cuDNN cho phép GPU truy cập trực tiếp vào System RAM của CPU thay vì dùng bộ nhớ video
+
+Vì cuDNN chuyển đổi mô hình từ đồ thị động sang đồ thị tĩnh vĩnh viễn
+8.Thiết bị nào sau đây được định nghĩa là "phần cứng chuyên dụng cho học sâu"?
+(1 Point)
+
+
+Intel Core i7
+
+NVIDIA RTX 2080 Ti
+
+TPU (Tensor Processing Unit)
+
+ARM MALI-G72
+9.Thành phần "Fixed-function MAC Engine" và "Programmable Layer Engine" nằm trong cấu trúc của thiết bị nào?
+(1 Point)
+
+
+NVIDIA DGX-2
+
+Google Cloud TPU
+
+ARM ML Processor
+
+Intel Xeon Platinum
+10.Đặc điểm chính phân biệt giữa CPU và GPU là gì?
+(1 Point)
+
+
+CPU có nhiều nhân hơn GPU
+
+CPU có ít nhân nhưng mỗi nhân rất nhanh, phù hợp cho các tác vụ tuần tự
+
+GPU tốt cho các tác vụ tuần tự, CPU tốt cho các tác vụ song song
+
+Nhân GPU có khả năng xử lý các thao tác phức tạp hơn nhân CPU
+11.Hệ thống siêu máy tính NVIDIA DGX-2 được trang bị dung lượng lưu trữ nội bộ (Internal Storage) là bao nhiêu?
+(1 Point)
+
+
+1.5 TB System Memory
+
+512 GB HBM2
+
+30 TB NVME SSDs
+
+1600 Gb/sec Ethernet
+12.Trong kiến trúc bộ xử lý ARM ML Processor, thành phần nào chịu trách nhiệm xử lý các phép tính logic không cố định của các lớp mạng?
+(1 Point)
+
+
+Fixed-function MAC Engine
+
+Programmable Layer Engine
+
+Network Control Unit
+
+DMA (Direct Memory Access)
+13.Công nghệ nào được sử dụng trong hệ thống NVIDIA DGX-2 để hỗ trợ kết nối tốc độ cao giữa các GPU với băng thông bisection lên tới 2.4 TB/sec?
+(1 Point)
+
+
+Cổng EDR Infiniband
+
+Khe cắm PCIe Switch
+
+12 thiết bị NVSWITCHES
+
+Cổng Dual 10/25 GbE Ethernet
+14.Loại bộ nhớ nào được sử dụng trong GPU NVIDIA TITAN V ?
+(1 Point)
+
+
+GDDR6
+
+12GB HBM2
+
+64GB HBM
+
+System RAM
+15.Thành phần "Fixed-function MAC Engine" trong kiến trúc ARM ML Processor đóng vai trò tương tự như bộ phận nào trong các phần cứng chuyên dụng khác?
+(1 Point)
+
+
+Hệ thống System RAM trên CPU Intel Core i7
+
+Bộ nhớ GDDR6 trên NVIDIA RTX 2080 Ti
+
+Tensor Cores trên NVIDIA TITAN V hoặc các đơn vị xử lý chuyên dụng trong TPU, vì đều tập trung tối ưu cực mạnh cho phép toán nhân-tích lũy (Matrix Multiplication)
+
+Cổng kết nối EDR Infiniband trên hệ thống DGX-2
+16.Thách thức chính khi triển khai các mô hình mạng nơ-ron sâu (DNN) có kích thước càng lớn là gì?
+(1 Point)
+
+
+Độ chính xác của mô hình sẽ bị giảm
+
+Mô hình không thể đưa ra dự đoán về dữ liệu mới.
+
+Cần càng nhiều tài nguyên tính toán và không gian lưu trữ
+
+Không thể sử dụng được các giải thuật tối ưu.
+17.Tại sao GPU lại rất phù hợp cho các phép toán trong học sâu như nhân ma trận?
+(1 Point)
+
+
+Vì GPU có tốc độ xung nhịp (Clock Speed) cao hơn CPU
+
+Vì GPU có nhiều nhân và rất tốt cho các tác vụ song song
+
+Vì GPU sử dụng bộ nhớ System RAM nhanh hơn.
+
+Vì GPU rẻ hơn CPU trong mọi trường hợp.
+18.Điểm khác biệt cốt lõi về mục tiêu giữa việc sử dụng máy chủ hiệu năng cao (như DGX-2) và các công cụ như TensorFlow Lite là gì?
+(1 Point)
+
+
+DGX-2 dùng để nén mạng, còn TensorFlow Lite dùng để huấn luyện mạng
+
+DGX-2 tập trung vào tài nguyên tính toán khổng lồ để đào tạo (training) mô hình DNN phức tạp, trong khi TensorFlow Lite tập trung vào việc nén và tối ưu hóa để suy diễn (inference) mô hình trên phần cứng hạn chế
+
+DGX-2 chỉ dùng cho dữ liệu văn bản, còn TensorFlow Lite chỉ dùng cho dữ liệu hình ảnh
+
+Không có sự khác biệt vì cả hai đều nhằm mục đích tăng độ chính xác của mô hình
+19.Hệ thống siêu máy tính NVIDIA DGX-2 được trang bị tổng cộng bao nhiêu GPU Tesla V100?
+(1 Point)
+
+
+8 GPU
+
+12 GPU
+
+16 GPU
+
+32 GPU
+20.Thiết bị biên Jetson Xavier NX sở hữu bao nhiêu nhân Tensor (Tensor cores)?
+(1 Point)
+
+
+128 nhân
+
+256 nhân
+
+48 nhân
+
+64 nhân
+21.Dựa trên sự khác biệt về kiến trúc giữa CPU và GPU, tại sao tỉ lệ tăng tốc (speedup) của GPU Pascal Titan X so với CPU Intel E5 lại tăng từ 66x (trên mạng VGG-16) lên đến 76x (trên mạng ResNet-200)?
+(1 Point)
+
+
+Vì ResNet-200 có ít tham số cần tính toán hơn VGG-16
+
+Vì CPU gặp lỗi khi xử lý các mạng nơ-ron có độ sâu vượt quá 100 lớp
+
+Vì các mạng sâu hơn như ResNet-200 chứa khối lượng cực lớn các phép toán song song (nhân ma trận), giúp khai thác triệt để lợi thế "nhiều nhân" của GPU so với kiến trúc "ít nhân tuần tự" của CPU
+
+Vì Pascal Titan X có tốc độ xung nhịp (Clock Speed) cao hơn CPU Intel E5
+22.Theo sơ đồ phân cấp các giải pháp xử lý tối ưu hóa ML của ARM, dòng chip "Ethos-U55" kết hợp với Cortex-M phù hợp nhất cho tác vụ nào sau đây?
+(1 Point)
+
+
+Nhận diện vật thể (Object detection)
+
+Nhận diện cử chỉ (Gesture detection)
+
+Nhận diện khuôn mặt thời gian thực (Real-time recognition)
+
+Phân loại vật thể phức tạp (Object classification).
+23.Tại sao bộ nhớ HBM2 (trên TITAN V) lại được ưu tiên sử dụng trong các phần cứng chuyên dụng cho học sâu hơn là GDDR6 (trên RTX 2080 Ti)
+(1 Point)
+
+
+Vì HBM2 có dung lượng lớn hơn gấp nhiều lần so với GDDR6
+
+Vì HBM2 cho phép lưu trữ cả dữ liệu hình ảnh và video cùng lúc
+
+Vì các tác vụ học sâu yêu cầu băng thông bộ nhớ cực cao để truyền tải lượng lớn tensor giữa bộ nhớ và các nhân tính toán, điều mà kiến trúc HBM2 đáp ứng tốt hơn
+
+Vì HBM2 có giá thành rẻ hơn đáng kể so với GDDR6
+24.Kết hợp thông tin từ biểu đồ "GigaFLOPs trên 1$" và danh sách thiết bị biên, sự kiện "Deep Learning Explosion" (2012) gắn liền với cột mốc phần cứng nào sau đây?
+(1 Point)
+
+
+Sự ra đời của kiến trúc Jetson Nano giá 129 USD
+
+Sự vượt trội hoàn toàn về hiệu năng trên giá thành của GPU (như dòng GTX 580 chạy AlexNet) so với CPU, thúc đẩy việc sử dụng GPU làm tiêu chuẩn cho học sâu
+
+Việc Google Coral chính thức thay thế toàn bộ GPU trong các trung tâm dữ liệu
+
+Khi tốc độ xung nhịp của CPU Intel Core i7 vượt qua ngưỡng 4.2 GHz
