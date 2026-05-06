@@ -7,9 +7,230 @@ const newChatButton = document.querySelector("#newChatButton");
 const openSidebar = document.querySelector("#openSidebar");
 const closeSidebar = document.querySelector("#closeSidebar");
 const sidebar = document.querySelector(".sidebar");
+const micButton = document.querySelector("#micButton");
 
 let currentSessionId = localStorage.getItem("cookwhat_session_id") || crypto.randomUUID();
 let isSending = false;
+
+// Speech-to-Text (STT)
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+let isRecording = false;
+
+if (SpeechRecognition) {
+  recognition = new SpeechRecognition();
+  recognition.lang = "vi-VN";
+  recognition.interimResults = true;
+  recognition.continuous = false;
+  recognition.maxAlternatives = 1;
+
+  let interimStart = 0; // cursor position where interim result begins
+
+  recognition.addEventListener("start", () => {
+    isRecording = true;
+    micButton.classList.add("recording");
+    micButton.title = "Đang nghe... (nhấn để dừng)";
+  });
+
+  recognition.addEventListener("result", (event) => {
+    let interimText = "";
+    let finalText = "";
+
+    for (const result of event.results) {
+      if (result.isFinal) {
+        finalText += result[0].transcript;
+      } else {
+        interimText += result[0].transcript;
+      }
+    }
+
+    // Replace interim portion and append final text
+    const base = input.value.slice(0, interimStart);
+    if (finalText) {
+      input.value = base + finalText;
+      interimStart = input.value.length;
+    } else {
+      input.value = base + interimText;
+    }
+    autoResizeInput();
+  });
+
+  recognition.addEventListener("end", () => {
+    isRecording = false;
+    micButton.classList.remove("recording");
+    micButton.title = "Nhận dạng giọng nói";
+    interimStart = input.value.length;
+  });
+
+  recognition.addEventListener("error", (event) => {
+    isRecording = false;
+    micButton.classList.remove("recording");
+    micButton.title = "Nhận dạng giọng nói";
+    if (event.error !== "aborted") {
+      const msgs = {
+        "not-allowed": "Vui lòng cấp quyền micro cho trang.",
+        "no-speech": "Không nghe thấy giọng nói.",
+        "network": "Lỗi mạng khi nhận dạng giọng nói.",
+      };
+      const msg = msgs[event.error] || `Lỗi nhận dạng: ${event.error}`;
+      showToast(msg);
+    }
+  });
+
+  micButton.addEventListener("click", () => {
+    if (isRecording) {
+      recognition.stop();
+    } else {
+      interimStart = input.value.length;
+      try {
+        recognition.start();
+      } catch {
+        // recognition already started – ignore
+      }
+    }
+  });
+} else {
+  // Browser doesn't support STT – hide the button
+  if (micButton) micButton.style.display = "none";
+}
+
+// Text-to-Speech — Backend API (gTTS tiếng Việt)
+let currentAudio = null;
+let currentSpeakBtn = null;
+
+function stopSpeaking() {
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio.src = "";
+    currentAudio = null;
+  }
+  if (currentSpeakBtn) {
+    currentSpeakBtn.classList.remove("speaking");
+    currentSpeakBtn.innerHTML = speakButtonInner(false);
+    currentSpeakBtn = null;
+  }
+}
+
+function speakButtonInner(speaking) {
+  const label = speaking ? "Dừng" : "Đọc";
+  const icon = speaking
+    ? `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`
+    : `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>`;
+  return `${icon}<span>${label}</span>`;
+}
+
+function attachSpeakButton(row, plainText) {
+  const bubble = row.querySelector(".bubble");
+  if (!bubble) return;
+
+  const btn = document.createElement("button");
+  btn.className = "speak-button";
+  btn.setAttribute("aria-label", "Đọc phản hồi");
+  btn.innerHTML = speakButtonInner(false);
+
+  btn.addEventListener("click", async () => {
+    if (btn.classList.contains("speaking")) {
+      stopSpeaking();
+      return;
+    }
+    stopSpeaking();
+
+    // Hiển thị trạng thái đang tải
+    btn.disabled = true;
+    btn.style.opacity = "0.6";
+
+    try {
+      const response = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: plainText, lang: "vi" }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      const audioUrl = URL.createObjectURL(blob);
+      const audio = new Audio(audioUrl);
+
+      currentAudio = audio;
+      currentSpeakBtn = btn;
+      btn.classList.add("speaking");
+      btn.innerHTML = speakButtonInner(true);
+
+      const onEnd = () => {
+        if (currentSpeakBtn === btn) {
+          btn.classList.remove("speaking");
+          btn.innerHTML = speakButtonInner(false);
+          currentSpeakBtn = null;
+          currentAudio = null;
+        }
+        URL.revokeObjectURL(audioUrl);
+      };
+      audio.addEventListener("ended", onEnd);
+      audio.addEventListener("error", () => {
+        onEnd();
+        showToast("Lỗi phát audio.");
+      });
+
+      audio.play();
+    } catch (error) {
+      showToast(`Lỗi TTS: ${error.message}`);
+    } finally {
+      btn.disabled = false;
+      btn.style.opacity = "";
+    }
+  });
+
+  bubble.appendChild(btn);
+}
+
+
+// Helper: strip markdown to plain text for TTS
+function stripMarkdown(md) {
+  return md
+    .replace(/#{1,6}\s*/g, "")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*\n]+)\*/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/[-*]\s+/g, "")
+    .replace(/\d+\.\s+/g, "")
+    .replace(/---+/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+// ─── Toast helper ────────────────────────────────────────────────────────────
+function showToast(message, duration = 3500) {
+  let toast = document.getElementById("cw-toast");
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.id = "cw-toast";
+    Object.assign(toast.style, {
+      position: "fixed",
+      bottom: "90px",
+      left: "50%",
+      transform: "translateX(-50%)",
+      background: "#1f2328",
+      color: "#f8fafc",
+      padding: "10px 18px",
+      borderRadius: "8px",
+      fontSize: "14px",
+      fontWeight: "500",
+      zIndex: "9999",
+      boxShadow: "0 4px 24px rgba(0,0,0,0.18)",
+      transition: "opacity 0.3s",
+      pointerEvents: "none",
+    });
+    document.body.appendChild(toast);
+  }
+  toast.textContent = message;
+  toast.style.opacity = "1";
+  clearTimeout(toast._hideTimer);
+  toast._hideTimer = setTimeout(() => { toast.style.opacity = "0"; }, duration);
+}
 
 function setCurrentSession(sessionId) {
   currentSessionId = sessionId || crypto.randomUUID();
@@ -148,6 +369,12 @@ function addMessage(role, content, options = {}) {
 
   row.appendChild(bubble);
   messagesEl.appendChild(row);
+
+  // Attach TTS button to non-loading assistant messages
+  if (safeRole === "assistant" && !options.loading) {
+    attachSpeakButton(row, stripMarkdown(safeContent));
+  }
+
   scrollToBottom();
 }
 
@@ -155,6 +382,7 @@ function setLoading(enabled) {
   isSending = enabled;
   sendButton.disabled = enabled;
   input.disabled = enabled;
+  if (micButton) micButton.disabled = enabled;
 }
 
 function autoResizeInput() {
@@ -225,7 +453,8 @@ async function sendMessage(content) {
     }
 
     setCurrentSession(data.session_id || currentSessionId);
-    addMessage("assistant", data.response || "Mình chưa có phản hồi phù hợp.");
+    const assistantText = data.response || "Mình chưa có phản hồi phù hợp.";
+    addMessage("assistant", assistantText);
     await loadSessions();
   } catch (error) {
     const loading = document.querySelector("#loadingMessage");

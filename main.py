@@ -1,17 +1,19 @@
+import io
 from pathlib import Path
 from uuid import uuid4
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from gtts import gTTS
 
 from app import db
 from app.ingredient_extract import extract_ingredients_from_text
 from app.intent_router import detect_intent
 from app.llm_service import call_llm
 from app.prompt_builder import build_prompt
-from app.schemas import ChatRequest
+from app.schemas import ChatRequest, TTSRequest
 from src.vectordb import search
 
 
@@ -101,6 +103,27 @@ def health():
         "message": "CookWhat API is running",
         "postgres_history": db.ready(),
     }
+
+
+@app.post("/api/tts")
+def text_to_speech(request: TTSRequest):
+    """Chuyển văn bản thành giọng nói tiếng Việt, trả về MP3."""
+    text = request.text.strip()
+    if not text:
+        return JSONResponse({"error": "Văn bản rỗng"}, status_code=400)
+
+    try:
+        tts = gTTS(text=text, lang=request.lang, slow=False)
+        fp = io.BytesIO()
+        tts.write_to_fp(fp)
+        fp.seek(0)
+        return StreamingResponse(
+            fp,
+            media_type="audio/mpeg",
+            headers={"Cache-Control": "no-store"},
+        )
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @app.get("/api/sessions")

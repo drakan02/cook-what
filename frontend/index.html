@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>CookWhat Chat</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260504-1" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260506-2" />
   </head>
   <body>
     <div class="app-shell">
@@ -48,13 +48,22 @@
             placeholder="Ví dụ: Mình có gà, trứng, hành lá..."
             autocomplete="off"
           ></textarea>
-          <button type="submit" id="sendButton" aria-label="Gửi tin nhắn">
-            <span>Gửi</span>
-          </button>
+          <div class="composer-actions">
+            <button type="button" id="micButton" class="mic-button" aria-label="Nhận dạng giọng nói" title="Nhận dạng giọng nói">
+              <svg id="micIcon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                <line x1="12" y1="19" x2="12" y2="22"/>
+              </svg>
+            </button>
+            <button type="submit" id="sendButton" aria-label="Gửi tin nhắn">
+              <span>Gửi</span>
+            </button>
+          </div>
         </form>
       </main>
     </div>
 
-    <script src="/static/app.js?v=20260504-1"></script>
+    <script src="/static/app.js?v=20260506-2"></script>
   </body>
 </html>
