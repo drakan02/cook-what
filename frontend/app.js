@@ -7,13 +7,112 @@ const newChatButton = document.querySelector("#newChatButton");
 const openSidebar = document.querySelector("#openSidebar");
 const closeSidebar = document.querySelector("#closeSidebar");
 const sidebar = document.querySelector(".sidebar");
+const deleteModal = document.querySelector("#deleteModal");
+const deleteModalCancel = document.querySelector("#deleteModalCancel");
+const deleteModalConfirm = document.querySelector("#deleteModalConfirm");
 
 let currentSessionId = localStorage.getItem("cookwhat_session_id") || crypto.randomUUID();
 let isSending = false;
+let openSessionMenu = null;
+let editingSessionId = null;
+let pendingRenameSessionId = null;
+let deleteTargetSession = null;
 
 function setCurrentSession(sessionId) {
   currentSessionId = sessionId || crypto.randomUUID();
   localStorage.setItem("cookwhat_session_id", currentSessionId);
+}
+
+function pinIconSvg() {
+  return `
+    <svg class="session-pin-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M14 3l7 7-2 2-2-1-4 4v3l-2 2-3-3 2-2v-3l-4-4-2 1-2-2 7-7 2 2 1 1z"></path>
+    </svg>
+  `;
+}
+
+function closeSessionMenu() {
+  if (openSessionMenu) {
+    const menu = openSessionMenu.querySelector(".session-menu");
+    if (menu) menu.hidden = true;
+    openSessionMenu.removeAttribute("data-open");
+    openSessionMenu = null;
+  }
+}
+
+function toggleSessionMenu(item) {
+  if (!item) return;
+
+  if (openSessionMenu === item) {
+    closeSessionMenu();
+    return;
+  }
+
+  closeSessionMenu();
+  item.setAttribute("data-open", "true");
+  openSessionMenu = item;
+}
+
+function closeDeleteModal() {
+  deleteTargetSession = null;
+  deleteModal.hidden = true;
+}
+
+function openDeleteModal(session) {
+
+  if (!session || !session.id) {
+    console.warn("Invalid session, not opening modal");
+    return;
+  }
+  closeSessionMenu();
+  deleteTargetSession = session;
+  deleteModal.hidden = false;
+  deleteModalConfirm?.focus();
+}
+
+async function updateSession(sessionId, payload) {
+  const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.detail || "Không thể cập nhật lịch sử chat.");
+  }
+
+  return response.json();
+}
+
+function startRenameSession(session) {
+  editingSessionId = session.id;
+  pendingRenameSessionId = session.id;
+  closeSessionMenu();
+  loadSessions();
+}
+
+async function finishRenameSession(sessionId, inputEl, cancel = false) {
+  if (cancel) {
+    editingSessionId = null;
+    pendingRenameSessionId = null;
+    loadSessions();
+    return;
+  }
+
+  const nextTitle = inputEl.value.trim();
+  try {
+    await updateSession(sessionId, { title: nextTitle || "New chat" });
+    editingSessionId = null;
+    pendingRenameSessionId = null;
+    await loadSessions();
+  } catch (error) {
+    window.alert(error.message || "Không thể đổi tên đoạn chat.");
+    window.requestAnimationFrame(() => {
+      inputEl.focus();
+      inputEl.select();
+    });
+  }
 }
 
 function escapeHtml(value) {
@@ -146,6 +245,33 @@ function addMessage(role, content, options = {}) {
   bubble.className = "bubble";
   bubble.innerHTML = safeRole === "assistant" ? renderMarkdown(safeContent) : escapeHtml(safeContent);
 
+  if (safeRole === "assistant" && !options.loading) {
+    const copyButton = document.createElement("button");
+    copyButton.type = "button";
+    copyButton.className = "message-copy-button";
+    copyButton.setAttribute("aria-label", "Sao chép câu trả lời");
+    copyButton.textContent = "Copy";
+    copyButton.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      try {
+        await navigator.clipboard.writeText(safeContent);
+        const originalText = copyButton.textContent;
+        copyButton.textContent = "Copied";
+        copyButton.disabled = true;
+        window.setTimeout(() => {
+          copyButton.textContent = originalText;
+          copyButton.disabled = false;
+        }, 1200);
+      } catch (error) {
+        copyButton.textContent = "Lỗi";
+        window.setTimeout(() => {
+          copyButton.textContent = "Copy";
+        }, 1200);
+      }
+    });
+    bubble.appendChild(copyButton);
+  }
+
   row.appendChild(bubble);
   messagesEl.appendChild(row);
   scrollToBottom();
@@ -168,21 +294,111 @@ async function loadSessions() {
 
   sessionList.innerHTML = "";
   sessions.forEach((session) => {
-    const button = document.createElement("button");
-    button.className = `session-button${session.id === currentSessionId ? " active" : ""}`;
-    button.type = "button";
-    button.dataset.sessionId = session.id;
-    button.innerHTML = `
-      <span class="session-title">${escapeHtml(session.title || "New chat")}</span>
-      <span class="session-meta">${escapeHtml((session.ingredients || []).join(", ") || "CookWhat")}</span>
+    const item = document.createElement("div");
+    const isActive = session.id === currentSessionId;
+    const isEditing = session.id === editingSessionId;
+    item.className = `session-item${isActive ? " active" : ""}${isEditing ? " editing" : ""}`;
+    item.dataset.sessionId = session.id;
+    item.innerHTML = `
+      <button class="session-button${isActive ? " active" : ""}" type="button">
+        <span class="session-main">
+          <span class="session-title-row">
+            ${session.pinned ? pinIconSvg() : ""}
+            <span class="session-title-text${isEditing ? " hidden" : ""}">${escapeHtml(session.title || "New chat")}</span>
+          </span>
+          <span class="session-meta">${escapeHtml((session.ingredients || []).join(", ") || "CookWhat")}</span>
+        </span>
+      </button>
+      <input
+        class="session-rename-input"
+        type="text"
+        value="${escapeHtml(session.title || "New chat")}"
+        aria-label="Sửa tên đoạn chat"
+        ${isEditing ? "" : "hidden"}
+      />
+      <button class="session-menu-trigger" type="button" aria-label="Mở tùy chọn" aria-haspopup="menu">
+        <span aria-hidden="true">⋯</span>
+      </button>
+      <div class="session-menu" role="menu" hidden>
+        <button type="button" data-action="rename">Rename</button>
+        <button type="button" data-action="pin">${session.pinned ? "Unpin" : "Pin to Top"}</button>
+        <button type="button" data-action="delete">Delete Chat</button>
+      </div>
     `;
+
+    const button = item.querySelector(".session-button");
+    const renameInput = item.querySelector(".session-rename-input");
+    const menuTrigger = item.querySelector(".session-menu-trigger");
+    const menu = item.querySelector(".session-menu");
+
     button.addEventListener("click", () => {
+      if (editingSessionId === session.id) return;
+      closeSessionMenu();
       setCurrentSession(session.id);
       loadMessages(session.id);
       loadSessions();
       sidebar.classList.remove("open");
     });
-    sessionList.appendChild(button);
+
+    menuTrigger.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (menu.hidden) {
+        menu.hidden = false;
+        toggleSessionMenu(item);
+      } else {
+        menu.hidden = true;
+        closeSessionMenu();
+      }
+    });
+
+    menu.addEventListener("click", async (event) => {
+      const actionButton = event.target.closest("button[data-action]");
+      if (!actionButton) return;
+
+      const action = actionButton.dataset.action;
+      if (action === "rename") {
+        startRenameSession(session);
+        return;
+      }
+
+      if (action === "pin") {
+        await updateSession(session.id, { pinned: !session.pinned });
+      }
+
+      if (action === "delete") {
+        openDeleteModal(session);
+        return;
+      }
+
+      closeSessionMenu();
+      await loadSessions();
+    });
+
+    renameInput?.addEventListener("keydown", async (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        await finishRenameSession(session.id, renameInput);
+      }
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        await finishRenameSession(session.id, renameInput, true);
+      }
+    });
+
+    renameInput?.addEventListener("blur", async () => {
+      if (editingSessionId !== session.id) return;
+      await finishRenameSession(session.id, renameInput);
+    });
+
+    if (pendingRenameSessionId === session.id && renameInput) {
+      window.requestAnimationFrame(() => {
+        renameInput.focus();
+        renameInput.select();
+      });
+    }
+
+    sessionList.appendChild(item);
   });
 }
 
@@ -257,7 +473,65 @@ input.addEventListener("keydown", (event) => {
   }
 });
 
+document.addEventListener("click", (event) => {
+  if (!event.target.closest(".session-item")) {
+    closeSessionMenu();
+  }
+});
+
+document.addEventListener("scroll", () => {
+  closeSessionMenu();
+}, true);
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    if (!deleteModal.hidden) {
+      closeDeleteModal();
+      return;
+    }
+    closeSessionMenu();
+  }
+});
+
+deleteModal?.addEventListener("click", (event) => {
+  if (event.target?.dataset?.dismiss === "true") {
+    closeDeleteModal();
+  }
+});
+
+deleteModalCancel?.addEventListener("click", () => {
+  closeDeleteModal();
+});
+
+deleteModalConfirm?.addEventListener("click", async () => {
+  if (!deleteTargetSession) return;
+
+  const session = deleteTargetSession;
+
+  closeDeleteModal();
+
+  try {
+    await fetch(`/api/sessions/${encodeURIComponent(session.id)}`, {
+      method: "DELETE",
+    });
+
+    if (session.id === currentSessionId) {
+      setCurrentSession(crypto.randomUUID());
+      await loadMessages(currentSessionId);
+    }
+    const item = document.querySelector(`[data-session-id="${session.id}"]`);
+    if (item) item.remove();
+
+    closeSessionMenu();
+    await loadSessions();
+  } catch (error) {
+    window.alert("Không thể xóa đoạn chat.");
+  }
+});
+
 newChatButton.addEventListener("click", () => {
+  closeSessionMenu();
+  closeDeleteModal();
   setCurrentSession(crypto.randomUUID());
   renderEmpty();
   loadSessions();

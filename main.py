@@ -11,7 +11,7 @@ from app.ingredient_extract import extract_ingredients_from_text
 from app.intent_router import detect_intent
 from app.llm_service import call_llm
 from app.prompt_builder import build_prompt
-from app.schemas import ChatRequest
+from app.schemas import ChatRequest, SessionUpdateRequest
 from src.vectordb import search
 
 
@@ -33,6 +33,7 @@ app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 # Fallback memory when PostgreSQL is not configured or not reachable.
 conversation_memory = {}
 chat_history_memory = {}
+session_meta_memory = {}
 
 
 @app.on_event("startup")
@@ -45,6 +46,26 @@ def build_session_title(message):
     if not title:
         return "New chat"
     return title[:48] + ("..." if len(title) > 48 else "")
+
+
+def get_session_meta(session_id):
+    return session_meta_memory.setdefault(
+        session_id,
+        {"title": "New chat", "pinned": False},
+    )
+
+
+def peek_session_meta(session_id):
+    return session_meta_memory.get(session_id, {})
+
+
+def set_session_meta(session_id, title=None, pinned=None):
+    meta = get_session_meta(session_id)
+    if title is not None:
+        meta["title"] = title
+    if pinned is not None:
+        meta["pinned"] = pinned
+    return meta
 
 
 def remember_message(session_id, role, content, message_type=None, metadata=None):
@@ -108,14 +129,17 @@ def list_sessions():
     if db.ready():
         return db.list_sessions()
 
-    return [
+    sessions = [
         {
             "id": session_id,
-            "title": messages[0]["content"][:48] if messages else "New chat",
+            "title": peek_session_meta(session_id).get("title", messages[0]["content"][:48] if messages else "New chat"),
+            "pinned": peek_session_meta(session_id).get("pinned", False),
             "ingredients": conversation_memory.get(session_id, {}).get("ingredients", []),
         }
         for session_id, messages in chat_history_memory.items()
     ]
+
+    return sorted(sessions, key=lambda session: (not session.get("pinned", False),))
 
 
 @app.get("/api/sessions/{session_id}/messages")
@@ -129,8 +153,38 @@ def get_messages(session_id: str):
 def delete_session(session_id: str):
     conversation_memory.pop(session_id, None)
     chat_history_memory.pop(session_id, None)
+    session_meta_memory.pop(session_id, None)
     db.delete_session(session_id)
     return {"status": "deleted"}
+
+
+@app.patch("/api/sessions/{session_id}")
+def update_session(session_id: str, request: SessionUpdateRequest):
+    title = request.title.strip() if request.title is not None else None
+    if title == "":
+        title = "New chat"
+
+    updated = False
+
+    if db.ready():
+        updated = db.update_session(session_id, title=title, pinned=request.pinned)
+
+    if session_id in chat_history_memory or session_id in conversation_memory or session_id in session_meta_memory:
+        set_session_meta(session_id, title=title, pinned=request.pinned)
+        if title is not None:
+            updated = True
+
+    if not updated and not db.ready():
+        return {"status": "not_found"}
+
+    return {
+        "status": "updated",
+        "session": {
+            "id": session_id,
+            "title": get_session_meta(session_id).get("title", "New chat"),
+            "pinned": get_session_meta(session_id).get("pinned", False),
+        },
+    }
 
 
 def run_recipe_search(ingredients, top_k):
@@ -164,6 +218,8 @@ def chat(request: ChatRequest):
 
     print("User message:", user_message)
 
+    if not db.ready():
+        set_session_meta(session_id, title=build_session_title(user_message))
     db.upsert_session(session_id, title=build_session_title(user_message))
     remember_message(session_id, "user", user_message)
 

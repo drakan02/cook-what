@@ -13,3 +13,8 @@ class ChatResponse(BaseModel):
     session_id: str
     ingredients: Optional[List[str]] = None
     response: str
+
+
+class SessionUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    pinned: Optional[bool] = None

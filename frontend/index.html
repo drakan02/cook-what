@@ -1,60 +1,71 @@
 <!doctype html>
 <html lang="vi">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>CookWhat Chat</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260504-1" />
-  </head>
-  <body>
-    <div class="app-shell">
-      <aside class="sidebar">
-        <div class="brand-row">
-          <div>
-            <div class="brand">CookWhat</div>
-            <div class="brand-subtitle">AI nấu ăn</div>
-          </div>
-          <button class="icon-button mobile-menu" id="closeSidebar" aria-label="Đóng lịch sử">
-            <span aria-hidden="true">×</span>
-          </button>
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CookWhat Chat</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20260506-2" />
+</head>
+
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand-row">
+        <div>
+          <div class="brand">CookWhat</div>
+          <div class="brand-subtitle">AI nấu ăn</div>
         </div>
-
-        <button class="new-chat-button" id="newChatButton">
-          <span aria-hidden="true">+</span>
-          Chat mới
+        <button class="icon-button mobile-menu" id="closeSidebar" aria-label="Đóng lịch sử">
+          <span aria-hidden="true">×</span>
         </button>
+      </div>
 
-        <div class="history-header">Lịch sử</div>
-        <nav class="session-list" id="sessionList" aria-label="Lịch sử chat"></nav>
-      </aside>
+      <button class="new-chat-button" id="newChatButton">
+        <span aria-hidden="true">+</span>
+        Chat mới
+      </button>
 
-      <main class="chat-panel">
-        <header class="topbar">
-          <button class="icon-button desktop-hidden" id="openSidebar" aria-label="Mở lịch sử">
-            <span aria-hidden="true">☰</span>
-          </button>
-          <div>
-            <h1>CookWhat Chat</h1>
-            <p>Nhập nguyên liệu bạn đang có, mình sẽ gợi ý món phù hợp.</p>
-          </div>
-        </header>
+      <div class="history-header">Lịch sử</div>
+      <nav class="session-list" id="sessionList" aria-label="Lịch sử chat"></nav>
+    </aside>
 
-        <section class="messages" id="messages" aria-live="polite"></section>
+    <main class="chat-panel">
+      <header class="topbar">
+        <button class="icon-button desktop-hidden" id="openSidebar" aria-label="Mở lịch sử">
+          <span aria-hidden="true">☰</span>
+        </button>
+        <div>
+          <h1>CookWhat Chat</h1>
+          <p>Nhập nguyên liệu bạn đang có, mình sẽ gợi ý món phù hợp.</p>
+        </div>
+      </header>
 
-        <form class="composer" id="chatForm">
-          <textarea
-            id="messageInput"
-            rows="1"
-            placeholder="Ví dụ: Mình có gà, trứng, hành lá..."
-            autocomplete="off"
-          ></textarea>
-          <button type="submit" id="sendButton" aria-label="Gửi tin nhắn">
-            <span>Gửi</span>
-          </button>
-        </form>
-      </main>
+      <section class="messages" id="messages" aria-live="polite"></section>
+
+      <form class="composer" id="chatForm">
+        <textarea id="messageInput" rows="1" placeholder="Ví dụ: Mình có gà, trứng, hành lá..."
+          autocomplete="off"></textarea>
+        <button type="submit" id="sendButton" aria-label="Gửi tin nhắn">
+          <span>Gửi</span>
+        </button>
+      </form>
+    </main>
+  </div>
+
+  <div class="confirm-modal" id="deleteModal" hidden>
+    <div class="confirm-backdrop" data-dismiss="true"></div>
+    <div class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">
+      <h2 id="deleteModalTitle">Xóa đoạn chat này?</h2>
+      <p id="deleteModalDescription">Đoạn chat sẽ bị xóa khỏi danh sách và dữ liệu lưu trữ.</p>
+      <div class="confirm-actions">
+        <button type="button" class="confirm-button secondary" id="deleteModalCancel">Hủy</button>
+        <button type="button" class="confirm-button danger" id="deleteModalConfirm">Xóa</button>
+      </div>
     </div>
+  </div>
 
-    <script src="/static/app.js?v=20260504-1"></script>
-  </body>
+  <script src="/static/app.js?v=20260506-2"></script>
+</body>
+
 </html>
