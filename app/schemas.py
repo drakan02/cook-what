@@ -18,3 +18,8 @@ class ChatResponse(BaseModel):
 class SessionUpdateRequest(BaseModel):
     title: Optional[str] = None
     pinned: Optional[bool] = None
+
+
+class TTSRequest(BaseModel):
+    text: str
+    lang: str = "vi"

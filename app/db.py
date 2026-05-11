@@ -22,7 +22,7 @@ def get_connection():
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is not configured")
 
-    with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
+    with psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=3) as conn:
         yield conn
 
 

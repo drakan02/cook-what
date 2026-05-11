@@ -10,6 +10,7 @@ const sidebar = document.querySelector(".sidebar");
 const deleteModal = document.querySelector("#deleteModal");
 const deleteModalCancel = document.querySelector("#deleteModalCancel");
 const deleteModalConfirm = document.querySelector("#deleteModalConfirm");
+const micButton = document.querySelector("#micButton");
 
 let currentSessionId = localStorage.getItem("cookwhat_session_id") || crypto.randomUUID();
 let isSending = false;
@@ -17,10 +18,22 @@ let openSessionMenu = null;
 let editingSessionId = null;
 let pendingRenameSessionId = null;
 let deleteTargetSession = null;
+let currentAudio = null;
+let currentSpeakButton = null;
+let currentAudioUrl = null;
 
 function setCurrentSession(sessionId) {
   currentSessionId = sessionId || crypto.randomUUID();
   localStorage.setItem("cookwhat_session_id", currentSessionId);
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 function pinIconSvg() {
@@ -31,13 +44,118 @@ function pinIconSvg() {
   `;
 }
 
-function closeSessionMenu() {
-  if (openSessionMenu) {
-    const menu = openSessionMenu.querySelector(".session-menu");
-    if (menu) menu.hidden = true;
-    openSessionMenu.removeAttribute("data-open");
-    openSessionMenu = null;
+function actionIcon(type) {
+  if (type === "copy") {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="9" y="9" width="11" height="11" rx="2"></rect>
+        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+      </svg>
+    `;
   }
+
+  if (type === "pause") {
+    return `
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="6" y="4" width="4" height="16"></rect>
+        <rect x="14" y="4" width="4" height="16"></rect>
+      </svg>
+    `;
+  }
+
+  return `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+      <path d="M15.5 8.5a5 5 0 0 1 0 7"></path>
+      <path d="M19 5a10 10 0 0 1 0 14"></path>
+    </svg>
+  `;
+}
+
+function flashAction(button, duration = 1200) {
+  button.classList.add("is-active");
+  window.setTimeout(() => {
+    if (!button.classList.contains("is-speaking")) {
+      button.classList.remove("is-active");
+    }
+  }, duration);
+}
+
+function stripMarkdown(content) {
+  return String(content || "")
+    .replace(/#{1,6}\s*/g, "")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*\n]+)\*/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/[-*]\s+/g, "")
+    .replace(/\d+\.\s+/g, "")
+    .replace(/---+/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function stopSpeaking() {
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio.src = "";
+    currentAudio = null;
+  }
+
+  if (currentAudioUrl) {
+    URL.revokeObjectURL(currentAudioUrl);
+    currentAudioUrl = null;
+  }
+
+  if (currentSpeakButton) {
+    currentSpeakButton.classList.remove("is-active", "is-speaking");
+    currentSpeakButton.innerHTML = actionIcon("speak");
+    currentSpeakButton.setAttribute("aria-label", "Đọc câu trả lời");
+    currentSpeakButton = null;
+  }
+}
+
+function finishSpeakingNaturally(audioUrl, button) {
+  if (currentAudioUrl === audioUrl) {
+    URL.revokeObjectURL(audioUrl);
+    currentAudioUrl = null;
+  }
+
+  if (currentAudio && currentAudio.src === audioUrl) {
+    currentAudio = null;
+  }
+
+  if (currentSpeakButton === button) {
+    button.classList.remove("is-active", "is-speaking");
+    button.innerHTML = actionIcon("speak");
+    button.setAttribute("aria-label", "Đọc câu trả lời");
+    button.title = "Đọc câu trả lời";
+    currentSpeakButton = null;
+  }
+}
+
+function showToast(message, duration = 3000) {
+  let toast = document.querySelector("#cw-toast");
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.id = "cw-toast";
+    document.body.appendChild(toast);
+  }
+
+  toast.textContent = message;
+  toast.classList.add("show");
+  clearTimeout(toast._hideTimer);
+  toast._hideTimer = window.setTimeout(() => {
+    toast.classList.remove("show");
+  }, duration);
+}
+
+function closeSessionMenu() {
+  if (!openSessionMenu) return;
+
+  const menu = openSessionMenu.querySelector(".session-menu");
+  if (menu) menu.hidden = true;
+  openSessionMenu.removeAttribute("data-open");
+  openSessionMenu = null;
 }
 
 function toggleSessionMenu(item) {
@@ -55,18 +173,18 @@ function toggleSessionMenu(item) {
 
 function closeDeleteModal() {
   deleteTargetSession = null;
+  if (!deleteModal) return;
   deleteModal.hidden = true;
+  deleteModal.setAttribute("aria-hidden", "true");
 }
 
 function openDeleteModal(session) {
+  if (!session?.id || !deleteModal) return;
 
-  if (!session || !session.id) {
-    console.warn("Invalid session, not opening modal");
-    return;
-  }
   closeSessionMenu();
   deleteTargetSession = session;
   deleteModal.hidden = false;
+  deleteModal.setAttribute("aria-hidden", "false");
   deleteModalConfirm?.focus();
 }
 
@@ -100,28 +218,18 @@ async function finishRenameSession(sessionId, inputEl, cancel = false) {
     return;
   }
 
-  const nextTitle = inputEl.value.trim();
   try {
-    await updateSession(sessionId, { title: nextTitle || "New chat" });
+    await updateSession(sessionId, { title: inputEl.value.trim() || "New chat" });
     editingSessionId = null;
     pendingRenameSessionId = null;
     await loadSessions();
   } catch (error) {
-    window.alert(error.message || "Không thể đổi tên đoạn chat.");
+    showToast(error.message || "Không thể đổi tên đoạn chat.");
     window.requestAnimationFrame(() => {
       inputEl.focus();
       inputEl.select();
     });
   }
-}
-
-function escapeHtml(value) {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
 }
 
 function renderInlineMarkdown(value) {
@@ -145,7 +253,7 @@ function flushList(listItems, ordered) {
 }
 
 function renderMarkdown(content) {
-  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  const lines = String(content || "").replace(/\r\n/g, "\n").split("\n");
   const blocks = [];
   let paragraph = [];
   let listItems = [];
@@ -212,7 +320,6 @@ function renderMarkdown(content) {
 
   flushParagraph();
   flushCurrentList();
-
   return blocks.join("");
 }
 
@@ -227,6 +334,92 @@ function renderEmpty() {
       <p>Gõ nguyên liệu đang có trong tủ lạnh. CookWhat sẽ tìm món phù hợp và bạn có thể hỏi tiếp như một cuộc trò chuyện.</p>
     </div>
   `;
+}
+
+function createAnswerActions(content) {
+  const actions = document.createElement("div");
+  actions.className = "message-actions";
+
+  const copyButton = document.createElement("button");
+  copyButton.type = "button";
+  copyButton.className = "message-action-button";
+  copyButton.setAttribute("aria-label", "Sao chép câu trả lời");
+  copyButton.title = "Sao chép";
+  copyButton.innerHTML = actionIcon("copy");
+  copyButton.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(content);
+      flashAction(copyButton);
+      showToast("Đã sao chép câu trả lời.", 1200);
+    } catch {
+      showToast("Không thể sao chép câu trả lời.");
+    }
+  });
+
+  const speakButton = document.createElement("button");
+  speakButton.type = "button";
+  speakButton.className = "message-action-button";
+  speakButton.setAttribute("aria-label", "Đọc câu trả lời");
+  speakButton.title = "Đọc câu trả lời";
+  speakButton.innerHTML = actionIcon("speak");
+  speakButton.addEventListener("click", async (event) => {
+    event.stopPropagation();
+
+    if (currentSpeakButton === speakButton) {
+      stopSpeaking();
+      return;
+    }
+
+    stopSpeaking();
+    speakButton.disabled = true;
+    speakButton.classList.add("is-active");
+
+    try {
+      const response = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: stripMarkdown(content), lang: "vi" }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      const audioUrl = URL.createObjectURL(blob);
+      currentAudioUrl = audioUrl;
+      currentAudio = new Audio(audioUrl);
+      currentSpeakButton = speakButton;
+
+      speakButton.classList.add("is-speaking");
+      speakButton.innerHTML = actionIcon("pause");
+      speakButton.setAttribute("aria-label", "Dừng đọc câu trả lời");
+      speakButton.title = "Dừng đọc";
+
+      currentAudio.addEventListener("ended", () => {
+        finishSpeakingNaturally(audioUrl, speakButton);
+      });
+      currentAudio.addEventListener("error", () => {
+        const shouldReport = currentAudio !== null;
+        stopSpeaking();
+        if (shouldReport) {
+          showToast("Lỗi phát audio.");
+        }
+      });
+      await currentAudio.play();
+    } catch (error) {
+      speakButton.classList.remove("is-active", "is-speaking");
+      speakButton.innerHTML = actionIcon("speak");
+      showToast(`Lỗi đọc câu trả lời: ${error.message}`);
+    } finally {
+      speakButton.disabled = false;
+    }
+  });
+
+  actions.append(copyButton, speakButton);
+  return actions;
 }
 
 function addMessage(role, content, options = {}) {
@@ -246,30 +439,7 @@ function addMessage(role, content, options = {}) {
   bubble.innerHTML = safeRole === "assistant" ? renderMarkdown(safeContent) : escapeHtml(safeContent);
 
   if (safeRole === "assistant" && !options.loading) {
-    const copyButton = document.createElement("button");
-    copyButton.type = "button";
-    copyButton.className = "message-copy-button";
-    copyButton.setAttribute("aria-label", "Sao chép câu trả lời");
-    copyButton.textContent = "Copy";
-    copyButton.addEventListener("click", async (event) => {
-      event.stopPropagation();
-      try {
-        await navigator.clipboard.writeText(safeContent);
-        const originalText = copyButton.textContent;
-        copyButton.textContent = "Copied";
-        copyButton.disabled = true;
-        window.setTimeout(() => {
-          copyButton.textContent = originalText;
-          copyButton.disabled = false;
-        }, 1200);
-      } catch (error) {
-        copyButton.textContent = "Lỗi";
-        window.setTimeout(() => {
-          copyButton.textContent = "Copy";
-        }, 1200);
-      }
-    });
-    bubble.appendChild(copyButton);
+    bubble.appendChild(createAnswerActions(safeContent));
   }
 
   row.appendChild(bubble);
@@ -281,6 +451,7 @@ function setLoading(enabled) {
   isSending = enabled;
   sendButton.disabled = enabled;
   input.disabled = enabled;
+  if (micButton) micButton.disabled = enabled;
 }
 
 function autoResizeInput() {
@@ -320,9 +491,9 @@ async function loadSessions() {
         <span aria-hidden="true">⋯</span>
       </button>
       <div class="session-menu" role="menu" hidden>
-        <button type="button" data-action="rename">Rename</button>
-        <button type="button" data-action="pin">${session.pinned ? "Unpin" : "Pin to Top"}</button>
-        <button type="button" data-action="delete">Delete Chat</button>
+        <button type="button" data-action="rename">Sửa tên</button>
+        <button type="button" data-action="pin">${session.pinned ? "Bỏ ghim" : "Ghim lên đầu"}</button>
+        <button type="button" data-action="delete">Xóa đoạn chat</button>
       </div>
     `;
 
@@ -346,7 +517,6 @@ async function loadSessions() {
         menu.hidden = false;
         toggleSessionMenu(item);
       } else {
-        menu.hidden = true;
         closeSessionMenu();
       }
     });
@@ -443,7 +613,7 @@ async function sendMessage(content) {
     setCurrentSession(data.session_id || currentSessionId);
     addMessage("assistant", data.response || "Mình chưa có phản hồi phù hợp.");
     await loadSessions();
-  } catch (error) {
+  } catch {
     const loading = document.querySelector("#loadingMessage");
     if (loading) loading.remove();
     addMessage("assistant", "Không kết nối được backend. Kiểm tra server FastAPI và PostgreSQL nếu bạn đang bật lưu lịch sử.");
@@ -451,6 +621,85 @@ async function sendMessage(content) {
     setLoading(false);
     input.focus();
   }
+}
+
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+let isRecording = false;
+
+if (SpeechRecognition && micButton) {
+  recognition = new SpeechRecognition();
+  recognition.lang = "vi-VN";
+  recognition.interimResults = true;
+  recognition.continuous = false;
+  recognition.maxAlternatives = 1;
+
+  let interimStart = 0;
+
+  recognition.addEventListener("start", () => {
+    isRecording = true;
+    micButton.classList.add("recording");
+    micButton.title = "Đang nghe... nhấn để dừng";
+  });
+
+  recognition.addEventListener("result", (event) => {
+    let interimText = "";
+    let finalText = "";
+
+    for (const result of event.results) {
+      if (result.isFinal) {
+        finalText += result[0].transcript;
+      } else {
+        interimText += result[0].transcript;
+      }
+    }
+
+    const base = input.value.slice(0, interimStart);
+    if (finalText) {
+      input.value = base + finalText;
+      interimStart = input.value.length;
+    } else {
+      input.value = base + interimText;
+    }
+    autoResizeInput();
+  });
+
+  recognition.addEventListener("end", () => {
+    isRecording = false;
+    micButton.classList.remove("recording");
+    micButton.title = "Nhận dạng giọng nói";
+    interimStart = input.value.length;
+  });
+
+  recognition.addEventListener("error", (event) => {
+    isRecording = false;
+    micButton.classList.remove("recording");
+    micButton.title = "Nhận dạng giọng nói";
+    if (event.error !== "aborted") {
+      const messages = {
+        "not-allowed": "Vui lòng cấp quyền micro cho trang.",
+        "no-speech": "Không nghe thấy giọng nói.",
+        "network": "Lỗi mạng khi nhận dạng giọng nói.",
+      };
+      showToast(messages[event.error] || `Lỗi nhận dạng: ${event.error}`);
+    }
+  });
+
+  micButton.addEventListener("click", () => {
+    if (isRecording) {
+      recognition.stop();
+      return;
+    }
+
+    interimStart = input.value.length;
+    try {
+      recognition.start();
+    } catch {
+      // Ignore repeated starts from quick double-clicks.
+    }
+  });
+} else if (micButton) {
+  micButton.style.display = "none";
 }
 
 form.addEventListener("submit", (event) => {
@@ -479,18 +728,17 @@ document.addEventListener("click", (event) => {
   }
 });
 
-document.addEventListener("scroll", () => {
-  closeSessionMenu();
-}, true);
+document.addEventListener("scroll", closeSessionMenu, true);
 
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") {
-    if (!deleteModal.hidden) {
-      closeDeleteModal();
-      return;
-    }
-    closeSessionMenu();
+  if (event.key !== "Escape") return;
+
+  if (deleteModal && !deleteModal.hidden) {
+    closeDeleteModal();
+    return;
   }
+
+  closeSessionMenu();
 });
 
 deleteModal?.addEventListener("click", (event) => {
@@ -499,16 +747,14 @@ deleteModal?.addEventListener("click", (event) => {
   }
 });
 
-deleteModalCancel?.addEventListener("click", () => {
-  closeDeleteModal();
-});
+deleteModalCancel?.addEventListener("click", closeDeleteModal);
 
 deleteModalConfirm?.addEventListener("click", async () => {
   if (!deleteTargetSession) return;
 
   const session = deleteTargetSession;
-
   closeDeleteModal();
+  closeSessionMenu();
 
   try {
     await fetch(`/api/sessions/${encodeURIComponent(session.id)}`, {
@@ -519,13 +765,11 @@ deleteModalConfirm?.addEventListener("click", async () => {
       setCurrentSession(crypto.randomUUID());
       await loadMessages(currentSessionId);
     }
-    const item = document.querySelector(`[data-session-id="${session.id}"]`);
-    if (item) item.remove();
 
-    closeSessionMenu();
+    document.querySelector(`[data-session-id="${session.id}"]`)?.remove();
     await loadSessions();
-  } catch (error) {
-    window.alert("Không thể xóa đoạn chat.");
+  } catch {
+    showToast("Không thể xóa đoạn chat.");
   }
 });
 

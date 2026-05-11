@@ -1,17 +1,19 @@
+import io
 from pathlib import Path
 from uuid import uuid4
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from gtts import gTTS
 
 from app import db
 from app.ingredient_extract import extract_ingredients_from_text
 from app.intent_router import detect_intent
 from app.llm_service import call_llm
 from app.prompt_builder import build_prompt
-from app.schemas import ChatRequest, SessionUpdateRequest
+from app.schemas import ChatRequest, SessionUpdateRequest, TTSRequest
 from src.vectordb import search
 
 
@@ -46,6 +48,11 @@ def build_session_title(message):
     if not title:
         return "New chat"
     return title[:48] + ("..." if len(title) > 48 else "")
+
+
+def debug_log(label, value):
+    safe_value = str(value).encode("unicode_escape").decode("ascii")
+    print(f"{label}: {safe_value}")
 
 
 def get_session_meta(session_id):
@@ -124,6 +131,27 @@ def health():
     }
 
 
+@app.post("/api/tts")
+def text_to_speech(request: TTSRequest):
+    """Chuyển văn bản thành giọng nói tiếng Việt, trả về MP3."""
+    text = request.text.strip()
+    if not text:
+        return JSONResponse({"error": "Văn bản rỗng"}, status_code=400)
+
+    try:
+        tts = gTTS(text=text, lang=request.lang, slow=False)
+        fp = io.BytesIO()
+        tts.write_to_fp(fp)
+        fp.seek(0)
+        return StreamingResponse(
+            fp,
+            media_type="audio/mpeg",
+            headers={"Cache-Control": "no-store"},
+        )
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.get("/api/sessions")
 def list_sessions():
     if db.ready():
@@ -190,7 +218,7 @@ def update_session(session_id: str, request: SessionUpdateRequest):
 def run_recipe_search(ingredients, top_k):
     query_text = ", ".join(ingredients)
 
-    print(f"Searching vector DB: {query_text}")
+    debug_log("Searching vector DB", query_text)
 
     vector_results = search(query=query_text, n_results=top_k)
 
@@ -216,7 +244,7 @@ def chat(request: ChatRequest):
     session_id = request.session_id or str(uuid4())
     user_message = request.message.strip()
 
-    print("User message:", user_message)
+    debug_log("User message", user_message)
 
     if not db.ready():
         set_session_meta(session_id, title=build_session_title(user_message))
@@ -236,7 +264,7 @@ def chat(request: ChatRequest):
 
     intent = intent_result.get("intent", "FOLLOW_UP")
 
-    print("Detected intent:", intent)
+    debug_log("Detected intent", intent)
 
     if intent == "NEW_SEARCH":
         ingredients = extract_ingredients_from_text(user_message)
@@ -340,7 +368,7 @@ hãy nói rõ lý do và đưa giải pháp thay thế.
 
         new_query = f"{', '.join(previous_ingredients)} {user_message}"
 
-        print("Research query:", new_query)
+        debug_log("Research query", new_query)
         vector_results = search(query=new_query, n_results=request.top_k)
 
         if not vector_results:
@@ -385,7 +413,7 @@ hãy nói rõ lý do và đưa giải pháp thay thế.
         new_ingredients = extract_ingredients_from_text(user_message)
         merged_ingredients = list(set(previous_ingredients + new_ingredients))
 
-        print("Merged ingredients:", merged_ingredients)
+        debug_log("Merged ingredients", merged_ingredients)
 
         vector_results = run_recipe_search(
             ingredients=merged_ingredients,
