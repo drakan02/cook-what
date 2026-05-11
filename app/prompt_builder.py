@@ -1,4 +1,4 @@
-def build_prompt(user_ingredients, vector_results):
+def build_prompt(user_ingredients, vector_results, user_request=None):
     context_text = ""
 
     for i, recipe in enumerate(vector_results, 1):
@@ -17,8 +17,11 @@ Thông tin công thức:
     prompt = f"""
 Bạn là CookWhat AI — trợ lý nấu ăn thông minh bằng tiếng Việt.
 
-Người dùng vừa nhập các nguyên liệu hiện có trong tủ lạnh:
+Nguyên liệu hoặc từ khóa món ăn người dùng cung cấp:
 {", ".join(user_ingredients)}
+
+Yêu cầu/ràng buộc gốc của người dùng:
+{user_request or "Không có ràng buộc bổ sung."}
 
 Hệ thống đã tìm được {len(vector_results)} công thức phù hợp nhất từ cơ sở dữ liệu Cookpad:
 
@@ -54,6 +57,11 @@ Không tự tạo thêm món mới.
 5. Nếu người dùng thiếu nguyên liệu: 
 - ghi rõ nguyên liệu đang thiếu 
 - gợi ý họ có thể mua thêm
+
+Nếu yêu cầu gốc có ràng buộc quan trọng như không có bếp, không có lửa, không thể nấu, ăn sống, ăn lạnh:
+- ưu tiên đánh giá món nào có thể làm không cần gia nhiệt
+- cảnh báo rõ món nào trong dữ liệu không phù hợp vì cần nấu/chiên/áp chảo
+- không gợi ý món dùng thịt bò sống/trứng sống nếu không an toàn; nếu có nhắc món sống thì phải cảnh báo rủi ro an toàn thực phẩm
 
 6. Dùng xuống dòng tự nhiên như đang chat:
 Ví dụ:

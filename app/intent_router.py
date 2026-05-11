@@ -1,7 +1,85 @@
 from app.llm_service import call_llm
 import json
+import re
+
+
+def _parse_json_object(value):
+    try:
+        return json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        pass
+
+    match = re.search(r"\{.*\}", str(value), flags=re.DOTALL)
+    if not match:
+        return None
+
+    try:
+        return json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+
+
+def _looks_like_new_search(message):
+    normalized = message.lower()
+    ingredient_markers = [
+        "tôi có",
+        "mình có",
+        "em có",
+        "tui có",
+        "nhà có",
+        "trong tủ",
+        "còn",
+        "nguyên liệu",
+    ]
+    return any(marker in normalized for marker in ingredient_markers) and (
+        "," in message or " và " in normalized or " với " in normalized
+    )
+
+
+def _looks_like_small_talk(message):
+    normalized = message.lower().strip(" .!?")
+    small_talk_phrases = {
+        "hi",
+        "hello",
+        "hey",
+        "xin chào",
+        "chào",
+        "chao",
+        "cảm ơn",
+        "cam on",
+        "thanks",
+        "thank you",
+        "bye",
+        "tạm biệt",
+    }
+    return normalized in small_talk_phrases
+
+
+def _looks_like_recipe_search(message):
+    normalized = message.lower()
+    recipe_markers = [
+        "tôi muốn làm",
+        "mình muốn làm",
+        "muốn làm món",
+        "làm món",
+        "nấu món",
+        "cách làm",
+        "công thức",
+        "recipe",
+    ]
+    return any(marker in normalized for marker in recipe_markers)
+
 
 def detect_intent(user_message, previous_ingredients=None):
+    if _looks_like_small_talk(user_message):
+        return {"intent": "SMALL_TALK"}
+
+    if _looks_like_new_search(user_message):
+        return {"intent": "NEW_SEARCH"}
+
+    if _looks_like_recipe_search(user_message):
+        return {"intent": "RESEARCH"}
+
     prompt = f"""
 Bạn là intent classifier cho ứng dụng gợi ý món ăn.
 
@@ -62,8 +140,9 @@ Trả về JSON:
 """
 
     response = call_llm(prompt)
+    parsed = _parse_json_object(response)
 
-    try:
-        return json.loads(response)
-    except:
-        return {"intent": "FOLLOW_UP"}
+    if isinstance(parsed, dict) and parsed.get("intent"):
+        return parsed
+
+    return {"intent": "FOLLOW_UP"}

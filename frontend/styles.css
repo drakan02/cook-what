@@ -250,12 +250,95 @@ textarea {
 
 .message-row.assistant .bubble {
   background: var(--assistant);
+  white-space: normal;
 }
 
 .message-row.loading .bubble {
   color: var(--muted);
   background: var(--panel-soft);
   box-shadow: none;
+}
+
+.message-row.assistant .bubble p,
+.message-row.assistant .bubble ul,
+.message-row.assistant .bubble ol {
+  margin: 0 0 12px;
+}
+
+.message-row.assistant .bubble p:last-child,
+.message-row.assistant .bubble ul:last-child,
+.message-row.assistant .bubble ol:last-child {
+  margin-bottom: 0;
+}
+
+.message-row.assistant .bubble h3,
+.message-row.assistant .bubble h4,
+.message-row.assistant .bubble h5,
+.message-row.assistant .bubble h6 {
+  margin: 16px 0 8px;
+  line-height: 1.25;
+}
+
+.message-row.assistant .bubble h3:first-child,
+.message-row.assistant .bubble h4:first-child,
+.message-row.assistant .bubble h5:first-child,
+.message-row.assistant .bubble h6:first-child {
+  margin-top: 0;
+}
+
+.message-row.assistant .bubble h3 {
+  font-size: 18px;
+}
+
+.message-row.assistant .bubble h4 {
+  font-size: 16px;
+}
+
+.message-row.assistant .bubble h5,
+.message-row.assistant .bubble h6 {
+  font-size: 15px;
+}
+
+.message-row.assistant .bubble ul,
+.message-row.assistant .bubble ol {
+  padding-left: 22px;
+}
+
+.message-row.assistant .bubble li + li {
+  margin-top: 4px;
+}
+
+.message-row.assistant .bubble hr {
+  margin: 16px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.message-row.assistant .bubble .table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 12px 0;
+}
+
+.message-row.assistant .bubble table {
+  width: 100%;
+  min-width: 520px;
+  border-collapse: collapse;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.message-row.assistant .bubble th,
+.message-row.assistant .bubble td {
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.message-row.assistant .bubble th {
+  background: var(--panel-soft);
+  font-weight: 700;
 }
 
 .composer {

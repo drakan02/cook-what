@@ -292,7 +292,11 @@ def chat(request: ChatRequest):
 
         remember_context(session_id, ingredients, vector_results)
 
-        prompt = build_prompt(user_ingredients=ingredients, vector_results=vector_results)
+        prompt = build_prompt(
+            user_ingredients=ingredients,
+            vector_results=vector_results,
+            user_request=user_message,
+        )
 
         llm_response = call_llm(prompt)
 
@@ -357,12 +361,37 @@ hãy nói rõ lý do và đưa giải pháp thay thế.
 
     if intent == "RESEARCH":
         if not previous_context:
+            debug_log("Recipe search query", user_message)
+            vector_results = search(query=user_message, n_results=request.top_k)
+
+            if not vector_results:
+                return chat_response(
+                    session_id,
+                    {
+                        "type": "no_result",
+                        "session_id": session_id,
+                        "response": "Mình chưa tìm thấy công thức phù hợp với yêu cầu này.",
+                    },
+                )
+
+            ingredients = [user_message]
+            remember_context(session_id, ingredients, vector_results)
+
+            prompt = build_prompt(
+                user_ingredients=ingredients,
+                vector_results=vector_results,
+                user_request=user_message,
+            )
+
+            llm_response = call_llm(prompt)
+
             return chat_response(
                 session_id,
                 {
-                    "type": "missing_context",
+                    "type": "recipe_search",
                     "session_id": session_id,
-                    "response": "Hãy cho mình biết nguyên liệu bạn đang có trước nhé.",
+                    "ingredients": ingredients,
+                    "response": llm_response,
                 },
             )
 
@@ -386,6 +415,7 @@ hãy nói rõ lý do và đưa giải pháp thay thế.
         prompt = build_prompt(
             user_ingredients=previous_ingredients,
             vector_results=vector_results,
+            user_request=user_message,
         )
 
         llm_response = call_llm(prompt)
@@ -435,6 +465,7 @@ hãy nói rõ lý do và đưa giải pháp thay thế.
         prompt = build_prompt(
             user_ingredients=merged_ingredients,
             vector_results=vector_results,
+            user_request=user_message,
         )
 
         llm_response = call_llm(prompt)
