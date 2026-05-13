@@ -9,6 +9,7 @@ CookWhat là ứng dụng gợi ý món ăn bằng tiếng Việt. Người dùn
 - Hỏi tiếp trong cùng một hội thoại, ví dụ món nào nhanh hơn, healthy hơn, dễ làm hơn.
 - Tìm lại món theo yêu cầu mới, ví dụ món Nhật, món Hàn, món hấp, món ít calo.
 - Thêm nguyên liệu vào ngữ cảnh hiện tại.
+- **Text-to-Speech (TTS) offline** — đọc phản hồi bằng giọng Việt qua Piper TTS.
 - Lưu lịch sử chat vào PostgreSQL.
 - Fallback sang bộ nhớ tạm nếu PostgreSQL chưa được cấu hình.
 - Tìm kiếm công thức bằng ChromaDB và sentence embedding.
@@ -28,7 +29,7 @@ Browser UI
 Các phần chính:
 
 ```text
-main.py                 FastAPI app, API chat, API lịch sử, static frontend
+main.py                 FastAPI app, API chat, API lịch sử, API TTS, static frontend
 frontend/               HTML/CSS/JS giao diện chat
 app/db.py               PostgreSQL storage cho chat_sessions và chat_messages
 app/llm_service.py      Gọi OpenRouter LLM
@@ -38,6 +39,7 @@ app/prompt_builder.py   Tạo prompt trả lời gợi ý món ăn
 src/vectordb.py         ChromaDB ingest/search
 src/embedding.py        Encode query/document bằng sentence-transformers
 scripts/                Script tải dữ liệu, build/search vector DB
+models/tts/             Model Piper TTS tiếng Việt (vi_VN-vais1000-medium)
 docker-compose.yml      PostgreSQL local bằng Docker
 ```
 
@@ -47,6 +49,27 @@ docker-compose.yml      PostgreSQL local bằng Docker
 - Docker Desktop nếu muốn chạy PostgreSQL bằng Docker.
 - OpenRouter API key.
 - ChromaDB data trong thư mục `chroma_db/`, hoặc tự build lại bằng pipeline.
+- **`espeak-ng`** — system dependency bắt buộc cho Piper TTS (xem hướng dẫn bên dưới).
+
+## Cài đặt espeak-ng (bắt buộc cho TTS)
+
+Piper TTS dùng `espeak-ng` để chuyển text sang phoneme. Cần cài trước khi chạy backend.
+
+Linux (Ubuntu/Debian):
+
+```bash
+sudo apt-get install -y espeak-ng
+```
+
+macOS:
+
+```bash
+brew install espeak-ng
+```
+
+Windows:
+
+Tải installer từ https://github.com/espeak-ng/espeak-ng/releases và chạy file `.msi`.
 
 ## Cài đặt Python
 
@@ -369,6 +392,8 @@ DATABASE_URL=postgresql://cookwhat:cookwhat_password@localhost:5432/project_name
 | Không có kết quả món ăn | Kiểm tra thư mục `chroma_db/` đã tồn tại và có collection `recipes` |
 | Lỗi OpenRouter/API key | Kiểm tra `OPENROUTER_API_KEY` và `OPENROUTER_MODEL` trong `.env` |
 | Docker daemon chưa chạy | Mở Docker Desktop rồi chạy lại lệnh Docker |
+| Nút đọc không có tiếng | Kiểm tra `espeak-ng` đã cài chưa; xem log uvicorn có `[TTS] Piper model loaded` không |
+| `TTS model chưa được load` (503) | File model thiếu trong `models/tts/`; chạy lại `git pull` để lấy file model |
 
 ## Ghi chú bảo mật
 
