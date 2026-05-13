@@ -35,10 +35,13 @@ app/db.py               PostgreSQL storage cho chat_sessions và chat_messages
 app/llm_service.py      Gọi OpenRouter LLM
 app/intent_router.py    Phân loại ý định user
 app/ingredient_extract.py
+app/nutrition_service.py Lookup dinh dưỡng từ Vietnamese_ingredients.csv
 app/prompt_builder.py   Tạo prompt trả lời gợi ý món ăn
+app/utils.py            Utility functions (JSON parsing, etc.)
 src/vectordb.py         ChromaDB ingest/search
 src/embedding.py        Encode query/document bằng sentence-transformers
 scripts/                Script tải dữ liệu, build/search vector DB
+data/Vietnamese_ingredients.csv  Dữ liệu dinh dưỡng 162 thực phẩm Việt Nam
 models/tts/             Model Piper TTS tiếng Việt (vi_VN-vais1000-medium)
 docker-compose.yml      PostgreSQL local bằng Docker
 ```
@@ -50,6 +53,8 @@ docker-compose.yml      PostgreSQL local bằng Docker
 - OpenRouter API key.
 - ChromaDB data trong thư mục `chroma_db/`, hoặc tự build lại bằng pipeline.
 - **`espeak-ng`** — system dependency bắt buộc cho Piper TTS (xem hướng dẫn bên dưới).
+- Ollama đang chạy với model embedding `bge-m3:567m` để encode query khi tìm kiếm.
+- Vietnamese ingredients CSV trong thư mục `data/Vietnamese_ingredients.csv` cho dinh dưỡng lookup.
 
 ## Cài đặt espeak-ng (bắt buộc cho TTS)
 
@@ -108,7 +113,7 @@ Cấu hình:
 
 ```env
 OPENROUTER_API_KEY=your_openrouter_api_key
-OPENROUTER_MODEL=openai/gpt-oss-120b
+OPENROUTER_MODEL=z-ai/glm-4.5-air:free
 DATABASE_URL=postgresql://cookwhat:cookwhat_password@localhost:5432/cookwhat
 ```
 
@@ -390,6 +395,8 @@ DATABASE_URL=postgresql://cookwhat:cookwhat_password@localhost:5432/project_name
 | Port `5432` đã bị dùng | Đổi mapping trong `docker-compose.yml`, ví dụ `"5433:5432"` |
 | `ModuleNotFoundError` | Chạy lại `python -m pip install -r requirements.txt` trong `.venv` |
 | Không có kết quả món ăn | Kiểm tra thư mục `chroma_db/` đã tồn tại và có collection `recipes` |
+| Dinh dưỡng không được tìm thấy | Kiểm tra `data/Vietnamese_ingredients.csv` đã tồn tại |
+| Lỗi tìm công thức / không kết nối Ollama | Chạy `ollama serve` và `ollama pull bge-m3:567m` |
 | Lỗi OpenRouter/API key | Kiểm tra `OPENROUTER_API_KEY` và `OPENROUTER_MODEL` trong `.env` |
 | Docker daemon chưa chạy | Mở Docker Desktop rồi chạy lại lệnh Docker |
 | Nút đọc không có tiếng | Kiểm tra `espeak-ng` đã cài chưa; xem log uvicorn có `[TTS] Piper model loaded` không |

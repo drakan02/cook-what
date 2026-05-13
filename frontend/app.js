@@ -393,8 +393,12 @@ async function finishRenameSession(sessionId, inputEl, cancel = false) {
 function renderInlineMarkdown(value) {
   let output = escapeHtml(value);
   output = output.replace(
-    /(https?:\/\/[^\s<]+)/g,
-    '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>'
+    /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+    '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>'
+  );
+  output = output.replace(
+    /(^|[^"'>])(https?:\/\/[^\s<]+)/g,
+    '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>'
   );
   output = output.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   output = output.replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
@@ -410,6 +414,41 @@ function flushList(listItems, ordered) {
   return `<${tag}>${items}</${tag}>`;
 }
 
+function isMarkdownTableRow(line) {
+  const trimmed = line.trim();
+  return trimmed.startsWith("|") && trimmed.endsWith("|") && trimmed.includes("|", 1);
+}
+
+function isMarkdownTableSeparator(line) {
+  if (!isMarkdownTableRow(line)) return false;
+  return line
+    .trim()
+    .slice(1, -1)
+    .split("|")
+    .every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
+}
+
+function parseMarkdownTableRow(line) {
+  return line
+    .trim()
+    .slice(1, -1)
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
+function renderTable(rows) {
+  if (rows.length < 2) return "";
+
+  const headers = parseMarkdownTableRow(rows[0]);
+  const bodyRows = rows.slice(2).map(parseMarkdownTableRow);
+  const head = headers.map((cell) => `<th>${renderInlineMarkdown(cell)}</th>`).join("");
+  const body = bodyRows
+    .map((row) => `<tr>${row.map((cell) => `<td>${renderInlineMarkdown(cell)}</td>`).join("")}</tr>`)
+    .join("");
+
+  return `<div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
 function renderMarkdown(content) {
   const lines = String(content || "").replace(/\r\n/g, "\n").split("\n");
   const blocks = [];
@@ -419,7 +458,7 @@ function renderMarkdown(content) {
 
   const flushParagraph = () => {
     if (!paragraph.length) return;
-    blocks.push(`<p>${renderInlineMarkdown(paragraph.join(" "))}</p>`);
+    blocks.push(`<p>${paragraph.map(renderInlineMarkdown).join("<br>")}</p>`);
     paragraph = [];
   };
 
@@ -429,29 +468,49 @@ function renderMarkdown(content) {
     listItems = [];
   };
 
-  lines.forEach((line) => {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     const trimmed = line.trim();
 
     if (!trimmed) {
       flushParagraph();
       flushCurrentList();
-      return;
+      continue;
     }
 
     if (/^---+$/.test(trimmed)) {
       flushParagraph();
       flushCurrentList();
       blocks.push("<hr>");
-      return;
+      continue;
     }
 
-    const headingMatch = trimmed.match(/^(#{1,3})\s+(.+)$/);
+    const headingMatch = trimmed.match(/^(#{1,6})\s+(.+)$/);
     if (headingMatch) {
       flushParagraph();
       flushCurrentList();
-      const level = Math.min(headingMatch[1].length + 2, 4);
+      const level = Math.min(headingMatch[1].length + 2, 6);
       blocks.push(`<h${level}>${renderInlineMarkdown(headingMatch[2])}</h${level}>`);
-      return;
+      continue;
+    }
+
+    if (
+      isMarkdownTableRow(trimmed) &&
+      index + 1 < lines.length &&
+      isMarkdownTableSeparator(lines[index + 1])
+    ) {
+      flushParagraph();
+      flushCurrentList();
+
+      const tableRows = [trimmed, lines[index + 1].trim()];
+      index += 2;
+      while (index < lines.length && isMarkdownTableRow(lines[index])) {
+        tableRows.push(lines[index].trim());
+        index += 1;
+      }
+      index -= 1;
+      blocks.push(renderTable(tableRows));
+      continue;
     }
 
     const orderedMatch = trimmed.match(/^\d+\.\s+(.+)$/);
@@ -460,7 +519,7 @@ function renderMarkdown(content) {
       if (listItems.length && !orderedList) flushCurrentList();
       orderedList = true;
       listItems.push(orderedMatch[1]);
-      return;
+      continue;
     }
 
     const bulletMatch = trimmed.match(/^[-*]\s+(.+)$/);
@@ -469,12 +528,12 @@ function renderMarkdown(content) {
       if (listItems.length && orderedList) flushCurrentList();
       orderedList = false;
       listItems.push(bulletMatch[1]);
-      return;
+      continue;
     }
 
     flushCurrentList();
     paragraph.push(trimmed);
-  });
+  }
 
   flushParagraph();
   flushCurrentList();
@@ -724,12 +783,12 @@ async function sendMessage(content) {
       }),
     });
 
-    const data = await response.json();
+    const data = await response.json().catch(() => ({}));
     const loading = document.querySelector("#loadingMessage");
     if (loading) loading.remove();
 
     if (!response.ok) {
-      addMessage("assistant", data.detail || "Có lỗi xảy ra khi gửi tin nhắn.");
+      addMessage("assistant", data.detail || data.error || `Backend trả về lỗi HTTP ${response.status}.`);
       return;
     }
 

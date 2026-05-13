@@ -1,17 +1,22 @@
 import json
+import logging
 import numpy as np
+import os
 import requests
 import time
 from pathlib import Path
+from typing import List, Optional
 
 from sentence_transformers import SentenceTransformer
 
+logger = logging.getLogger(__name__)
+
 # ---------- Config ----------
-OLLAMA_BASE_URL = "http://localhost:11434"
-OLLAMA_MODEL = "bge-m3:567m"
-BATCH_SIZE = 32         # Kich thuoc lo = 32
-REQUEST_TIMEOUT = 60    # seconds
-RETRY_MAX = 3           # số lần retry khi request lỗi
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "bge-m3:567m")
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", "32"))
+REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "60"))
+RETRY_MAX = int(os.getenv("RETRY_MAX", "3"))
 RETRY_DELAY = 2         # seconds giữa các retry
 
 # ---------- BGE-M3 qua Ollama không cần prefix ----------
@@ -41,7 +46,7 @@ def check_ollama_connection() -> None:
         )
     
 
-def _embed_batch_with_retry(texts: list[str]) -> list[list[float]]:
+def _embed_batch_with_retry(texts: List[str]) -> List[List[float]]:
     """
     Gọi Ollama /api/embed cho một batch texts.
     Tự động retry nếu lỗi tạm thời.
@@ -87,7 +92,7 @@ def _normalize(vectors: np.ndarray) -> np.ndarray:
     norms = np.where(norms == 0, 1e-10, norms)      # tránh chia 0
     return vectors / norms
 
-def encode_documents(texts: list[str]) -> np.ndarray:
+def encode_documents(texts: List[str]) -> np.ndarray:
     """
     Encode list text thành ma trận embedding (N, dim).
     Xử lý theo batch, normalize kết quả.

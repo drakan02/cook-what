@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+from typing import List, Dict, Any
 
 # ---------- Helpers ----------
 def truncate_description(desc: str, max_chars: int = 200) -> str:
@@ -12,7 +13,7 @@ def truncate_description(desc: str, max_chars: int = 200) -> str:
         return desc
     return desc[:max_chars].rsplit(" ", 1)[0] + "..."
 
-def recipe_to_text(recipe: dict) -> str:
+def recipe_to_text(recipe: Dict[str, Any]) -> str:
     """
     Flatten toàn bộ thông tin recipe thành một đoạn text có cấu trúc.
     Đây là nội dung sẽ được embed và lưu vào ChromaDB (documents field).
@@ -42,7 +43,7 @@ Cách làm:
     
     return chunk.strip()
 
-def build_metadata(recipe: dict) -> dict:
+def build_metadata(recipe: Dict[str, Any]) -> Dict[str, Any]:
     """
     Tạo metadata dict để lưu kèm trong ChromaDB.
     ChromaDB chỉ chấp nhận str | int | float | bool trong metadata,
@@ -60,7 +61,7 @@ def build_metadata(recipe: dict) -> dict:
     }
 
 # ---------- Main processor ----------
-def process_recipes(input_path: str) -> list[dict]:
+def process_recipes(input_path: str) -> List[Dict[str, Any]]:
     """
     Đọc file JSONL (mỗi dòng 1 recipe JSON) hoặc JSON array,
     trả về list các chunk dict sẵn sàng để embed.
@@ -103,7 +104,7 @@ def process_recipes(input_path: str) -> list[dict]:
           f"Chunks tạo được: {len(chunks)} | Bỏ qua: {skipped}")
     return chunks
 
-def save_chunks(chunks: list[dict], output_path: str) -> None:
+def save_chunks(chunks: List[Dict[str, Any]], output_path: str) -> None:
     """Lưu chunks ra file JSONL để embedding.py đọc lại."""
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
