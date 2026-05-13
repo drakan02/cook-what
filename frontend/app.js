@@ -18,9 +18,12 @@ let openSessionMenu = null;
 let editingSessionId = null;
 let pendingRenameSessionId = null;
 let deleteTargetSession = null;
+
+// TTS state
 let currentAudio = null;
 let currentSpeakButton = null;
 let currentAudioUrl = null;
+let ttsAbortController = null;
 
 function setCurrentSession(sessionId) {
   currentSessionId = sessionId || crypto.randomUUID();
@@ -53,7 +56,6 @@ function actionIcon(type) {
       </svg>
     `;
   }
-
   if (type === "pause") {
     return `
       <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -94,13 +96,95 @@ function stripMarkdown(content) {
     .trim();
 }
 
+// TTS helpers
+function splitIntoChunks(text, maxLen = 200) {
+  const sentences = text.match(/[^.!?\n]+[.!?\n]*/g) || [text];
+  const chunks = [];
+  let current = "";
+
+  for (const sentence of sentences) {
+    if ((current + sentence).length > maxLen && current) {
+      chunks.push(current.trim());
+      current = sentence;
+    } else {
+      current += sentence;
+    }
+  }
+  if (current.trim()) chunks.push(current.trim());
+  return chunks;
+}
+
+async function fetchAudioChunk(text, signal) {
+  const response = await fetch("/api/tts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, lang: "vi" }),
+    signal,
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${response.status}`);
+  }
+  const blob = await response.blob();
+  return URL.createObjectURL(blob);
+}
+
+function prefetchFirstChunk(text) {
+  const chunks = splitIntoChunks(stripMarkdown(text));
+  if (!chunks.length) return null;
+ 
+  const abortController = new AbortController();
+  const audioUrlPromise = fetchAudioChunk(chunks[0], abortController.signal).catch(() => null);
+ 
+  return {
+    audioUrlPromise, // Promise<string|null>
+    abortController,
+    chunks,
+    cancel() {
+      abortController.abort();
+      audioUrlPromise.then((url) => { if (url) URL.revokeObjectURL(url); }).catch(() => {});
+    },
+  };
+}
+
+function playAudioUrl(audioUrl) {
+  return new Promise((resolve) => {
+    const audio = new Audio(audioUrl);
+    currentAudio = audio;
+    currentAudioUrl = audioUrl;
+
+    audio.addEventListener("ended", () => {
+      URL.revokeObjectURL(audioUrl);
+      if (currentAudioUrl === audioUrl) {
+        currentAudio = null;
+        currentAudioUrl = null;
+      }
+      resolve();
+    });
+    audio.addEventListener("error", () => {
+      URL.revokeObjectURL(audioUrl);
+      if (currentAudioUrl === audioUrl) {
+        currentAudio = null;
+        currentAudioUrl = null;
+      }
+      resolve();
+    });
+
+    audio.play().catch(() => resolve());
+  });
+}
+
 function stopSpeaking() {
+  if (ttsAbortController) {
+    ttsAbortController.abort();
+    ttsAbortController = null;
+  }
+
   if (currentAudio) {
     currentAudio.pause();
     currentAudio.src = "";
     currentAudio = null;
   }
-
   if (currentAudioUrl) {
     URL.revokeObjectURL(currentAudioUrl);
     currentAudioUrl = null;
@@ -110,26 +194,100 @@ function stopSpeaking() {
     currentSpeakButton.classList.remove("is-active", "is-speaking");
     currentSpeakButton.innerHTML = actionIcon("speak");
     currentSpeakButton.setAttribute("aria-label", "Đọc câu trả lời");
+    currentSpeakButton.title = "Đọc câu trả lời";
+    currentSpeakButton.disabled = false;
     currentSpeakButton = null;
   }
 }
 
-function finishSpeakingNaturally(audioUrl, button) {
-  if (currentAudioUrl === audioUrl) {
-    URL.revokeObjectURL(audioUrl);
-    currentAudioUrl = null;
+// TTS pipeline streaming
+// Fetch chunk N+1 while playing chunk N
+async function startStreamingTTS(text, speakButton, prefetch = null) {
+  const PREFETCH = 2;
+  
+  stopSpeaking();
+ 
+  speakButton.classList.add("is-active", "is-speaking");
+  speakButton.innerHTML = actionIcon("pause");
+  speakButton.setAttribute("aria-label", "Dừng đọc câu trả lời");
+  speakButton.title = "Dừng đọc";
+  currentSpeakButton = speakButton;
+
+  const chunks = prefetch?.chunks ?? splitIntoChunks(stripMarkdown(text));
+  const abortController = new AbortController();
+  ttsAbortController = abortController;
+  const { signal } = abortController;
+
+  const fetchSlots = new Array(chunks.length).fill(null);
+  let nextFetchIndex = 0;
+
+  function scheduleFetch(index) {
+    if (index >= chunks.length) return;
+    if (fetchSlots[index] !== null) return;
+    fetchSlots[index] = fetchAudioChunk(chunks[index], signal).catch(() => null);
   }
 
-  if (currentAudio && currentAudio.src === audioUrl) {
-    currentAudio = null;
+  if (prefetch?.audioUrlPromise && !prefetch.abortController.signal.aborted) {
+    fetchSlots[0] = prefetch.audioUrlPromise;
+    nextFetchIndex = 1;
   }
 
-  if (currentSpeakButton === button) {
-    button.classList.remove("is-active", "is-speaking");
-    button.innerHTML = actionIcon("speak");
-    button.setAttribute("aria-label", "Đọc câu trả lời");
-    button.title = "Đọc câu trả lời";
+  for (let i = nextFetchIndex; i < Math.min(PREFETCH, chunks.length); i++) {
+    scheduleFetch(i);
+    nextFetchIndex = i + 1;
+  }
+ 
+  let fetchError = null;
+ 
+  for (let playIndex = 0; playIndex < chunks.length; playIndex++) {
+    if (signal.aborted) break;
+ 
+    // Trigger fetch next chunk
+    if (nextFetchIndex < chunks.length) {
+      scheduleFetch(nextFetchIndex);
+      nextFetchIndex++;
+    }
+
+    let audioUrl = null;
+    try {
+      audioUrl = await fetchSlots[playIndex];
+    } catch (err) {
+      if (!signal.aborted) fetchError = err;
+      break;
+    }
+ 
+    if (signal.aborted) {
+      if (audioUrl) URL.revokeObjectURL(audioUrl);
+      break;
+    }
+ 
+    if (!audioUrl) continue; 
+ 
+    await playAudioUrl(audioUrl);
+ 
+    if (signal.aborted) break;
+  }
+
+  if (signal.aborted) {
+    for (let i = 0; i < fetchSlots.length; i++) {
+      if (fetchSlots[i]) {
+        fetchSlots[i].then((url) => { if (url) URL.revokeObjectURL(url); }).catch(() => {});
+      }
+    }
+  }
+ 
+  if (currentSpeakButton === speakButton && !signal.aborted) {
+    speakButton.classList.remove("is-active", "is-speaking");
+    speakButton.innerHTML = actionIcon("speak");
+    speakButton.setAttribute("aria-label", "Đọc câu trả lời");
+    speakButton.title = "Đọc câu trả lời";
+    speakButton.disabled = false;
     currentSpeakButton = null;
+    ttsAbortController = null;
+ 
+    if (fetchError) {
+      showToast(`Lỗi TTS: ${fetchError.message}`);
+    }
   }
 }
 
@@ -391,7 +549,7 @@ function renderEmpty() {
   `;
 }
 
-function createAnswerActions(content) {
+function createAnswerActions(content, prefetch = null) {
   const actions = document.createElement("div");
   actions.className = "message-actions";
 
@@ -418,59 +576,22 @@ function createAnswerActions(content) {
   speakButton.setAttribute("aria-label", "Đọc câu trả lời");
   speakButton.title = "Đọc câu trả lời";
   speakButton.innerHTML = actionIcon("speak");
-  speakButton.addEventListener("click", async (event) => {
+
+  let pendingPrefetch = prefetch;
+
+  speakButton.addEventListener("click", (event) => {
     event.stopPropagation();
 
     if (currentSpeakButton === speakButton) {
       stopSpeaking();
+      pendingPrefetch = null;
       return;
     }
 
-    stopSpeaking();
-    speakButton.disabled = true;
-    speakButton.classList.add("is-active");
+    const usedPrefetch = pendingPrefetch;
+    pendingPrefetch = null;
 
-    try {
-      const response = await fetch("/api/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: stripMarkdown(content), lang: "vi" }),
-      });
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.error || `HTTP ${response.status}`);
-      }
-
-      const blob = await response.blob();
-      const audioUrl = URL.createObjectURL(blob);
-      currentAudioUrl = audioUrl;
-      currentAudio = new Audio(audioUrl);
-      currentSpeakButton = speakButton;
-
-      speakButton.classList.add("is-speaking");
-      speakButton.innerHTML = actionIcon("pause");
-      speakButton.setAttribute("aria-label", "Dừng đọc câu trả lời");
-      speakButton.title = "Dừng đọc";
-
-      currentAudio.addEventListener("ended", () => {
-        finishSpeakingNaturally(audioUrl, speakButton);
-      });
-      currentAudio.addEventListener("error", () => {
-        const shouldReport = currentAudio !== null;
-        stopSpeaking();
-        if (shouldReport) {
-          showToast("Lỗi phát audio.");
-        }
-      });
-      await currentAudio.play();
-    } catch (error) {
-      speakButton.classList.remove("is-active", "is-speaking");
-      speakButton.innerHTML = actionIcon("speak");
-      showToast(`Lỗi đọc câu trả lời: ${error.message}`);
-    } finally {
-      speakButton.disabled = false;
-    }
+    startStreamingTTS(content, speakButton, usedPrefetch);
   });
 
   actions.append(copyButton, speakButton);
@@ -494,7 +615,8 @@ function addMessage(role, content, options = {}) {
   bubble.innerHTML = safeRole === "assistant" ? renderMarkdown(safeContent) : escapeHtml(safeContent);
 
   if (safeRole === "assistant" && !options.loading) {
-    bubble.appendChild(createAnswerActions(safeContent));
+    const prefetch = prefetchFirstChunk(safeContent);
+    bubble.appendChild(createAnswerActions(safeContent, prefetch));
   }
 
   row.appendChild(bubble);
@@ -523,6 +645,7 @@ async function loadSessions() {
     const item = document.createElement("div");
     const isActive = session.id === currentSessionId;
     const isEditing = session.id === editingSessionId;
+
     item.className = `session-item${isActive ? " active" : ""}${isEditing ? " editing" : ""}`;
     item.dataset.sessionId = session.id;
     item.innerHTML = `
@@ -630,8 +753,8 @@ async function loadSessions() {
 async function loadMessages(sessionId) {
   const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/messages`);
   const messages = await response.json();
-
   messagesEl.innerHTML = "";
+
   if (!messages.length) {
     renderEmpty();
     return;
@@ -671,7 +794,10 @@ async function sendMessage(content) {
   } catch {
     const loading = document.querySelector("#loadingMessage");
     if (loading) loading.remove();
-    addMessage("assistant", "Không kết nối được backend. Kiểm tra server FastAPI và PostgreSQL nếu bạn đang bật lưu lịch sử.");
+    addMessage(
+      "assistant",
+      "Không kết nối được backend. Kiểm tra server FastAPI và PostgreSQL nếu bạn đang bật lưu lịch sử."
+    );
   } finally {
     setLoading(false);
     input.focus();
@@ -734,7 +860,7 @@ if (SpeechRecognition && micButton) {
       const messages = {
         "not-allowed": "Vui lòng cấp quyền micro cho trang.",
         "no-speech": "Không nghe thấy giọng nói.",
-        "network": "Lỗi mạng khi nhận dạng giọng nói.",
+        network: "Lỗi mạng khi nhận dạng giọng nói.",
       };
       showToast(messages[event.error] || `Lỗi nhận dạng: ${event.error}`);
     }
@@ -745,7 +871,7 @@ if (SpeechRecognition && micButton) {
       recognition.stop();
       return;
     }
-
+    
     interimStart = input.value.length;
     try {
       recognition.start();
