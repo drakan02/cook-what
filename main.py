@@ -1,15 +1,14 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.schemas import ChatRequest
 from app.prompt_builder import build_prompt
-from app.llm_service import call_llm
+from app.llm_service import call_llm_stream
 from app.ingredient_extract import extract_ingredients_from_text
 from app.intent_router import detect_intent
 
 from src.vectordb import search
-
 
 app = FastAPI(
     title="CookWhat API",
@@ -109,15 +108,10 @@ def chat(request: ChatRequest):
             user_ingredients=ingredients,
             vector_results=vector_results
         )
-
-        llm_response = call_llm(prompt)
-
-        return JSONResponse({
-            "type": "new_search",
-            "session_id": session_id,
-            "ingredients": ingredients,
-            "response": llm_response
-        })
+        return StreamingResponse(
+            call_llm_stream(prompt),
+            media_type="text/plain"
+        )
     elif intent == "FOLLOW_UP":
         if not previous_context:
             return JSONResponse({
@@ -142,6 +136,18 @@ User hỏi tiếp:
 "{user_message}"
 
 Hãy trả lời tự nhiên như ChatGPT bằng tiếng Việt.
+Khi nhắc tới món nào:
+- luôn ghi rõ tên món
+- luôn kèm Link công thức của món đó
+- có xuống dòng 
+- có bullet points
+
+Ví dụ:
+- Gà chiên nước mắm
+Link công thức: https://...
+
+- Gà hấp gừng
+Link công thức: https://...
 
 Nếu user hỏi:
 - món nào healthy hơn
@@ -153,13 +159,10 @@ Nếu user hỏi:
 Nếu tất cả món không phù hợp:
 hãy nói rõ lý do và đưa giải pháp thay thế.
 """
-        llm_response = call_llm(followup_prompt)
-
-        return JSONResponse({
-            "type": "follow_up",
-            "session_id": session_id,
-            "response": llm_response
-        })
+        return StreamingResponse(
+            call_llm_stream(followup_prompt),
+            media_type="text/plain"
+        )
     elif intent == "RESEARCH":
         if not previous_context:
             return JSONResponse({
@@ -190,14 +193,10 @@ hãy nói rõ lý do và đưa giải pháp thay thế.
             user_ingredients=previous_ingredients,
             vector_results=vector_results
         )
-
-        llm_response = call_llm(prompt)
-
-        return JSONResponse({
-            "type": "research",
-            "session_id": session_id,
-            "response": llm_response
-        })
+        return StreamingResponse(
+            call_llm_stream(prompt),
+            media_type="text/plain"
+        )
 
     elif intent == "ADD_INGREDIENT":
         if not previous_context:
@@ -234,15 +233,10 @@ hãy nói rõ lý do và đưa giải pháp thay thế.
             user_ingredients=merged_ingredients,
             vector_results=vector_results
         )
-
-        llm_response = call_llm(prompt)
-
-        return JSONResponse({
-            "type": "add_ingredient",
-            "session_id": session_id,
-            "ingredients": merged_ingredients,
-            "response": llm_response
-        })
+        return StreamingResponse(
+            call_llm_stream(prompt),
+            media_type="text/plain"
+        )
     elif intent == "SMALL_TALK":
         prompt = f"""
 Bạn là CookWhat AI.
@@ -254,12 +248,10 @@ Hãy trả lời thân thiện như chatbot.
 Nếu user cảm ơn → đáp lại lịch sự.
 Nếu user chào → chào lại.
 """
-        llm_response = call_llm(prompt)
-
-        return JSONResponse({
-            "type": "small_talk",
-            "response": llm_response
-        })
+        return StreamingResponse(
+            call_llm_stream(prompt),
+            media_type="text/plain"
+        )
     return JSONResponse({
         "type": "fallback",
         "response": "Mình chưa hiểu rõ yêu cầu của bạn. Bạn có thể nói rõ hơn không?"
