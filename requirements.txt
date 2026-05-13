@@ -7,4 +7,4 @@ requests
 openai
 chromadb
 psycopg[binary]
-gtts
+piper-tts

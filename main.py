@@ -1,4 +1,6 @@
 import io
+import traceback
+import wave
 from pathlib import Path
 from uuid import uuid4
 
@@ -6,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from gtts import gTTS
+from piper import PiperVoice
 
 from app import db
 from app.ingredient_extract import extract_ingredients_from_text
@@ -38,9 +40,20 @@ chat_history_memory = {}
 session_meta_memory = {}
 
 
+BASE_PIPER_MODEL = BASE_DIR / "models" / "tts" / "vi_VN-vais1000-medium.onnx"
+piper_voice: PiperVoice | None = None
+
+
 @app.on_event("startup")
 def startup():
+    global piper_voice
     db.init_db()
+    if BASE_PIPER_MODEL.exists():
+        print("[TTS] Loading Piper voice model...")
+        piper_voice = PiperVoice.load(str(BASE_PIPER_MODEL))
+        print("[TTS] Piper model loaded.")
+    else:
+        print(f"[TTS] WARNING: Piper model not found at {BASE_PIPER_MODEL}")
 
 
 def build_session_title(message):
@@ -133,23 +146,31 @@ def health():
 
 @app.post("/api/tts")
 def text_to_speech(request: TTSRequest):
-    """Chuyển văn bản thành giọng nói tiếng Việt, trả về MP3."""
+    """Chuyển văn bản thành giọng nói tiếng Việt bằng Piper TTS (local), trả về WAV."""
     text = request.text.strip()
     if not text:
         return JSONResponse({"error": "Văn bản rỗng"}, status_code=400)
+    if piper_voice is None:
+        return JSONResponse(
+            {"error": "TTS model chưa được load. Kiểm tra file model tại models/tts/"},
+            status_code=503,
+        )
 
     try:
-        tts = gTTS(text=text, lang=request.lang, slow=False)
         fp = io.BytesIO()
-        tts.write_to_fp(fp)
+        with wave.open(fp, "wb") as wav_file:
+            piper_voice.synthesize_wav(text, wav_file)
         fp.seek(0)
         return StreamingResponse(
             fp,
-            media_type="audio/mpeg",
+            media_type="audio/wav",
             headers={"Cache-Control": "no-store"},
         )
     except Exception as e:
+        traceback.print_exc()
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
 
 
 @app.get("/api/sessions")
