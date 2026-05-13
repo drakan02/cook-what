@@ -1,25 +1,11 @@
-from app.llm_service import call_llm
-import json
+from app.llm_service import LLMServiceError, call_llm
+from app.utils import parse_json_object
+from typing import Optional, Dict, List
 import re
 
 
-def _parse_json_object(value):
-    try:
-        return json.loads(value)
-    except (TypeError, json.JSONDecodeError):
-        pass
-
-    match = re.search(r"\{.*\}", str(value), flags=re.DOTALL)
-    if not match:
-        return None
-
-    try:
-        return json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return None
-
-
-def _looks_like_new_search(message):
+def _looks_like_new_search(message: str) -> bool:
+    """Check if message looks like new ingredient search."""
     normalized = message.lower()
     ingredient_markers = [
         "tôi có",
@@ -27,8 +13,12 @@ def _looks_like_new_search(message):
         "em có",
         "tui có",
         "nhà có",
+        "nhà còn",
         "trong tủ",
-        "còn",
+        "trong tủ còn",
+        "tôi còn",
+        "mình còn",
+        "em còn",
         "nguyên liệu",
     ]
     return any(marker in normalized for marker in ingredient_markers) and (
@@ -36,7 +26,8 @@ def _looks_like_new_search(message):
     )
 
 
-def _looks_like_small_talk(message):
+def _looks_like_small_talk(message: str) -> bool:
+    """Check if message is small talk."""
     normalized = message.lower().strip(" .!?")
     small_talk_phrases = {
         "hi",
@@ -55,7 +46,8 @@ def _looks_like_small_talk(message):
     return normalized in small_talk_phrases
 
 
-def _looks_like_recipe_search(message):
+def _looks_like_recipe_search(message: str) -> bool:
+    """Check if message is about recipe search."""
     normalized = message.lower()
     recipe_markers = [
         "tôi muốn làm",
@@ -70,7 +62,16 @@ def _looks_like_recipe_search(message):
     return any(marker in normalized for marker in recipe_markers)
 
 
-def detect_intent(user_message, previous_ingredients=None):
+def detect_intent(user_message: str, previous_ingredients: Optional[List[str]] = None) -> Dict[str, str]:
+    """Detect user intent from message.
+    
+    Args:
+        user_message: User input text
+        previous_ingredients: List of ingredients from previous context
+        
+    Returns:
+        Dict with 'intent' key containing intent type
+    """
     if _looks_like_small_talk(user_message):
         return {"intent": "SMALL_TALK"}
 
@@ -139,8 +140,12 @@ Trả về JSON:
 }}
 """
 
-    response = call_llm(prompt)
-    parsed = _parse_json_object(response)
+    try:
+        response = call_llm(prompt)
+    except LLMServiceError:
+        return {"intent": "FOLLOW_UP"}
+
+    parsed = parse_json_object(response)
 
     if isinstance(parsed, dict) and parsed.get("intent"):
         return parsed

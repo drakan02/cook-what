@@ -1,30 +1,26 @@
-import json
+from typing import List
+from app.llm_service import LLMServiceError, call_llm
+from app.utils import parse_json_object
 import re
 
-from app.llm_service import call_llm
 
-
-def _parse_json_object(value):
-    try:
-        return json.loads(value)
-    except (TypeError, json.JSONDecodeError):
-        pass
-
-    match = re.search(r"\{.*\}", str(value), flags=re.DOTALL)
-    if not match:
-        return None
-
-    try:
-        return json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return None
-
-
-def _fallback_extract_ingredients(user_message):
+def _fallback_extract_ingredients(user_message: str) -> List[str]:
+    """Fallback ingredient extraction using regex patterns."""
     normalized = user_message.lower()
     candidate = user_message
 
-    for prefix in ["tôi có", "mình có", "em có", "tui có", "nhà có", "trong tủ còn", "còn"]:
+    for prefix in [
+        "tôi có",
+        "mình có",
+        "em có",
+        "tui có",
+        "nhà có",
+        "nhà còn",
+        "trong tủ còn",
+        "tôi còn",
+        "mình còn",
+        "em còn",
+    ]:
         if prefix in normalized:
             start = normalized.index(prefix) + len(prefix)
             candidate = user_message[start:]
@@ -50,7 +46,15 @@ def _fallback_extract_ingredients(user_message):
     return ingredients
 
 
-def extract_ingredients_from_text(user_message):
+def extract_ingredients_from_text(user_message: str) -> List[str]:
+    """Extract ingredients from user message using LLM.
+    
+    Args:
+        user_message: User input text
+        
+    Returns:
+        List of extracted ingredient strings
+    """
     fallback_ingredients = _fallback_extract_ingredients(user_message)
     if len(fallback_ingredients) >= 2:
         return fallback_ingredients
@@ -74,8 +78,12 @@ Nếu không có nguyên liệu thì trả:
 }}
 """
 
-    content = call_llm(prompt)
-    parsed = _parse_json_object(content)
+    try:
+        content = call_llm(prompt)
+    except LLMServiceError:
+        return fallback_ingredients
+
+    parsed = parse_json_object(content)
 
     if isinstance(parsed, dict) and isinstance(parsed.get("ingredients"), list):
         return parsed["ingredients"]

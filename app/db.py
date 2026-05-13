@@ -81,6 +81,29 @@ def init_db() -> None:
 
 
 def ready() -> bool:
+    global _db_ready
+
+    if not _db_ready:
+        return False
+
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+        return True
+    except Exception:
+        _db_ready = False
+        logger.exception("Lost PostgreSQL chat history connection.")
+        return False
+
+
+def _disable_on_error(action: str) -> None:
+    global _db_ready
+    _db_ready = False
+    logger.exception("PostgreSQL chat history disabled after %s failed.", action)
+
+
+def _is_ready_cached() -> bool:
     return _db_ready
 
 
@@ -91,55 +114,63 @@ def upsert_session(
     recipes: Optional[List[Dict[str, Any]]] = None,
     pinned: Optional[bool] = None,
 ) -> None:
-    if not _db_ready:
+    if not _is_ready_cached():
         return
 
+    has_title = title is not None
     has_ingredients = ingredients is not None
     has_recipes = recipes is not None
     has_pinned = pinned is not None
 
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO chat_sessions (id, title, pinned, ingredients, recipes)
-                VALUES (%s, %s, %s, %s::jsonb, %s::jsonb)
-                ON CONFLICT (id) DO UPDATE SET
-                    title = chat_sessions.title,
-                    pinned = CASE WHEN %s THEN EXCLUDED.pinned ELSE chat_sessions.pinned END,
-                    ingredients = CASE WHEN %s THEN EXCLUDED.ingredients ELSE chat_sessions.ingredients END,
-                    recipes = CASE WHEN %s THEN EXCLUDED.recipes ELSE chat_sessions.recipes END,
-                    updated_at = NOW()
-                """,
-                (
-                    session_id,
-                    title or "New chat",
-                    bool(pinned) if has_pinned else False,
-                    json.dumps(ingredients if has_ingredients else []),
-                    json.dumps(recipes if has_recipes else []),
-                    has_pinned,
-                    has_ingredients,
-                    has_recipes,
-                ),
-            )
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO chat_sessions (id, title, pinned, ingredients, recipes)
+                    VALUES (%s, %s, %s, %s::jsonb, %s::jsonb)
+                    ON CONFLICT (id) DO UPDATE SET
+                        title = CASE WHEN %s THEN EXCLUDED.title ELSE chat_sessions.title END,
+                        pinned = CASE WHEN %s THEN EXCLUDED.pinned ELSE chat_sessions.pinned END,
+                        ingredients = CASE WHEN %s THEN EXCLUDED.ingredients ELSE chat_sessions.ingredients END,
+                        recipes = CASE WHEN %s THEN EXCLUDED.recipes ELSE chat_sessions.recipes END,
+                        updated_at = NOW()
+                    """,
+                    (
+                        session_id,
+                        title or "New chat",
+                        bool(pinned) if has_pinned else False,
+                        json.dumps(ingredients if has_ingredients else []),
+                        json.dumps(recipes if has_recipes else []),
+                        has_title,
+                        has_pinned,
+                        has_ingredients,
+                        has_recipes,
+                    ),
+                )
+    except Exception:
+        _disable_on_error("upsert_session")
 
 
 def set_session_context(session_id: str, ingredients: List[str], recipes: List[Dict[str, Any]]) -> None:
-    if not _db_ready:
+    if not _is_ready_cached():
         return
 
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE chat_sessions
-                SET ingredients = %s::jsonb,
-                    recipes = %s::jsonb,
-                    updated_at = NOW()
-                WHERE id = %s
-                """,
-                (json.dumps(ingredients), json.dumps(recipes), session_id),
-            )
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE chat_sessions
+                    SET ingredients = %s::jsonb,
+                        recipes = %s::jsonb,
+                        updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (json.dumps(ingredients), json.dumps(recipes), session_id),
+                )
+    except Exception:
+        _disable_on_error("set_session_context")
 
 
 def add_message(
@@ -149,81 +180,99 @@ def add_message(
     message_type: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
 ) -> None:
-    if not _db_ready:
+    if not _is_ready_cached():
         return
 
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO chat_messages (session_id, role, content, message_type, metadata)
-                VALUES (%s, %s, %s, %s, %s::jsonb)
-                """,
-                (session_id, role, content, message_type, json.dumps(metadata or {})),
-            )
-            cur.execute(
-                "UPDATE chat_sessions SET updated_at = NOW() WHERE id = %s",
-                (session_id,),
-            )
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO chat_messages (session_id, role, content, message_type, metadata)
+                    VALUES (%s, %s, %s, %s, %s::jsonb)
+                    """,
+                    (session_id, role, content, message_type, json.dumps(metadata or {})),
+                )
+                cur.execute(
+                    "UPDATE chat_sessions SET updated_at = NOW() WHERE id = %s",
+                    (session_id,),
+                )
+    except Exception:
+        _disable_on_error("add_message")
 
 
 def list_sessions() -> List[Dict[str, Any]]:
-    if not _db_ready:
+    if not _is_ready_cached():
         return []
 
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, title, pinned, ingredients, created_at, updated_at
-                FROM chat_sessions
-                ORDER BY pinned DESC, updated_at DESC, created_at DESC
-                """
-            )
-            return list(cur.fetchall())
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, title, pinned, ingredients, created_at, updated_at
+                    FROM chat_sessions
+                    ORDER BY pinned DESC, updated_at DESC, created_at DESC
+                    """
+                )
+                return list(cur.fetchall())
+    except Exception:
+        _disable_on_error("list_sessions")
+        return []
 
 
 def get_messages(session_id: str) -> List[Dict[str, Any]]:
-    if not _db_ready:
+    if not _is_ready_cached():
         return []
 
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT id, role, content, message_type, metadata, created_at
-                FROM chat_messages
-                WHERE session_id = %s
-                ORDER BY created_at ASC, id ASC
-                """,
-                (session_id,),
-            )
-            return list(cur.fetchall())
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, role, content, message_type, metadata, created_at
+                    FROM chat_messages
+                    WHERE session_id = %s
+                    ORDER BY created_at ASC, id ASC
+                    """,
+                    (session_id,),
+                )
+                return list(cur.fetchall())
+    except Exception:
+        _disable_on_error("get_messages")
+        return []
 
 
 def get_session_context(session_id: str) -> Optional[Dict[str, Any]]:
-    if not _db_ready:
+    if not _is_ready_cached():
         return None
 
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT ingredients, recipes FROM chat_sessions WHERE id = %s",
-                (session_id,),
-            )
-            row = cur.fetchone()
-            if not row:
-                return None
-            return {"ingredients": row["ingredients"] or [], "recipes": row["recipes"] or []}
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT ingredients, recipes FROM chat_sessions WHERE id = %s",
+                    (session_id,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return None
+                return {"ingredients": row["ingredients"] or [], "recipes": row["recipes"] or []}
+    except Exception:
+        _disable_on_error("get_session_context")
+        return None
 
 
 def delete_session(session_id: str) -> None:
-    if not _db_ready:
+    if not _is_ready_cached():
         return
 
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM chat_sessions WHERE id = %s", (session_id,))
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM chat_sessions WHERE id = %s", (session_id,))
+    except Exception:
+        _disable_on_error("delete_session")
 
 
 def update_session(
@@ -231,7 +280,7 @@ def update_session(
     title: Optional[str] = None,
     pinned: Optional[bool] = None,
 ) -> bool:
-    if not _db_ready:
+    if not _is_ready_cached():
         return False
 
     assignments = []
@@ -251,10 +300,14 @@ def update_session(
     assignments.append("updated_at = NOW()")
     params.append(session_id)
 
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                f"UPDATE chat_sessions SET {', '.join(assignments)} WHERE id = %s",
-                params,
-            )
-            return cur.rowcount > 0
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"UPDATE chat_sessions SET {', '.join(assignments)} WHERE id = %s",
+                    params,
+                )
+                return cur.rowcount > 0
+    except Exception:
+        _disable_on_error("update_session")
+        return False

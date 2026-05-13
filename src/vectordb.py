@@ -1,6 +1,7 @@
 import json
 import numpy as np
 from pathlib import Path
+from typing import Optional, Dict, List, Any
 
 import chromadb
 from chromadb.config import Settings
@@ -110,10 +111,10 @@ def ingest(embeddings_dir: str,
 # ---------- Search ----------
 def search(query: str,
            n_results: int = 5,
-           filter_ingredient: str | None = None,
-           filter_location: str | None = None,
+           filter_ingredient: Optional[str] = None,
+           filter_location: Optional[str] = None,
            chroma_path: str = CHROMA_PATH,
-           collection_name: str = COLLECTION_NAME) -> list[dict]:
+           collection_name: str = COLLECTION_NAME) -> List[Dict[str, Any]]:
     """
     Tìm kiếm recipe theo câu query tự nhiên.
  
@@ -160,7 +161,7 @@ def search(query: str,
 
     return output
 
-def _build_where(ingredient: str | None, location: str | None) -> dict | None:
+def _build_where(ingredient: Optional[str], location: Optional[str]) -> Optional[Dict[str, Any]]:
     """Tạo ChromaDB where clause từ các filter."""
     conditions = []
 

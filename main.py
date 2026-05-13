@@ -1,7 +1,11 @@
 import io
+import logging
+import os
+import sys
 import traceback
 import wave
 from pathlib import Path
+from typing import Optional, Dict, Any, List
 from uuid import uuid4
 
 from fastapi import FastAPI
@@ -11,12 +15,21 @@ from fastapi.staticfiles import StaticFiles
 from piper import PiperVoice
 
 from app import db
+from app.config import validate_config
 from app.ingredient_extract import extract_ingredients_from_text
 from app.intent_router import detect_intent
-from app.llm_service import call_llm
+from app.llm_service import LLMServiceError, call_llm
+from app.nutrition_service import lookup_many
 from app.prompt_builder import build_prompt
 from app.schemas import ChatRequest, SessionUpdateRequest, TTSRequest
 from src.vectordb import search
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -24,12 +37,15 @@ FRONTEND_DIR = BASE_DIR / "frontend"
 
 app = FastAPI(title="CookWhat API", version="1.0.0")
 
+# Allow specific origins for CORS security
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:8000").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "DELETE", "PATCH"],
+    allow_headers=["Content-Type"],
 )
 
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
@@ -41,34 +57,51 @@ session_meta_memory = {}
 
 
 BASE_PIPER_MODEL = BASE_DIR / "models" / "tts" / "vi_VN-vais1000-medium.onnx"
-piper_voice: PiperVoice | None = None
+piper_voice: Optional[PiperVoice] = None
+
+
+class RecipeSearchError(RuntimeError):
+    pass
 
 
 @app.on_event("startup")
-def startup():
+def startup() -> None:
+    """Initialize app on startup: validate config, init DB, load TTS model."""
     global piper_voice
+    
+    # Validate configuration
+    validate_config()
+    
+    # Initialize database
     db.init_db()
+    
+    # Load TTS model
     if BASE_PIPER_MODEL.exists():
-        print("[TTS] Loading Piper voice model...")
+        logger.info("Loading Piper voice model...")
         piper_voice = PiperVoice.load(str(BASE_PIPER_MODEL))
-        print("[TTS] Piper model loaded.")
+        logger.info("Piper model loaded successfully")
     else:
-        print(f"[TTS] WARNING: Piper model not found at {BASE_PIPER_MODEL}")
+        logger.warning(f"Piper model not found at {BASE_PIPER_MODEL}")
+    
+    logger.info("Application startup complete")
 
 
-def build_session_title(message):
+def build_session_title(message: str) -> str:
+    """Build session title from first user message (max 48 chars)."""
     title = " ".join(message.strip().split())
     if not title:
         return "New chat"
     return title[:48] + ("..." if len(title) > 48 else "")
 
 
-def debug_log(label, value):
+def debug_log(label: str, value: Any) -> None:
+    """Log debug info with proper encoding."""
     safe_value = str(value).encode("unicode_escape").decode("ascii")
-    print(f"{label}: {safe_value}")
+    logger.debug(f"{label}: {safe_value}")
 
 
-def get_session_meta(session_id):
+def get_session_meta(session_id: str) -> Dict[str, Any]:
+    """Get or create session metadata."""
     return session_meta_memory.setdefault(
         session_id,
         {"title": "New chat", "pinned": False},
@@ -79,7 +112,8 @@ def peek_session_meta(session_id):
     return session_meta_memory.get(session_id, {})
 
 
-def set_session_meta(session_id, title=None, pinned=None):
+def set_session_meta(session_id: str, title: Optional[str] = None, pinned: Optional[bool] = None) -> Dict[str, Any]:
+    """Update session metadata."""
     meta = get_session_meta(session_id)
     if title is not None:
         meta["title"] = title
@@ -88,7 +122,8 @@ def set_session_meta(session_id, title=None, pinned=None):
     return meta
 
 
-def remember_message(session_id, role, content, message_type=None, metadata=None):
+def remember_message(session_id: str, role: str, content: str, message_type: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None) -> None:
+    """Remember message in memory and DB."""
     chat_history_memory.setdefault(session_id, []).append(
         {
             "role": role,
@@ -100,12 +135,14 @@ def remember_message(session_id, role, content, message_type=None, metadata=None
     db.add_message(session_id, role, content, message_type, metadata)
 
 
-def remember_context(session_id, ingredients, recipes):
+def remember_context(session_id: str, ingredients: List[str], recipes: List[Dict[str, Any]]) -> None:
+    """Remember recipe context in memory and DB."""
     conversation_memory[session_id] = {"ingredients": ingredients, "recipes": recipes}
     db.set_session_context(session_id, ingredients, recipes)
 
 
-def get_context(session_id):
+def get_context(session_id: str) -> Optional[Dict[str, Any]]:
+    """Get recipe context for session from memory or DB."""
     if session_id in conversation_memory:
         return conversation_memory[session_id]
 
@@ -117,7 +154,8 @@ def get_context(session_id):
     return None
 
 
-def chat_response(session_id, payload, message_type=None):
+def chat_response(session_id: str, payload: Dict[str, Any], message_type: Optional[str] = None) -> JSONResponse:
+    """Send chat response and remember message."""
     response_text = payload.get("response")
     if response_text:
         remember_message(
@@ -128,6 +166,32 @@ def chat_response(session_id, payload, message_type=None):
             payload,
         )
     return JSONResponse(payload)
+
+
+def llm_error_response(session_id: str, exc: Exception) -> JSONResponse:
+    """Handle LLM errors."""
+    logger.error(f"LLM error: {exc}")
+    return chat_response(
+        session_id,
+        {
+            "type": "llm_error",
+            "session_id": session_id,
+            "response": f"Mình đang gặp lỗi khi gọi mô hình AI: {exc}",
+        },
+    )
+
+
+def search_error_response(session_id: str, exc: Exception) -> JSONResponse:
+    """Handle recipe search errors."""
+    logger.error(f"Search error: {exc}")
+    return chat_response(
+        session_id,
+        {
+            "type": "search_error",
+            "session_id": session_id,
+            "response": f"Mình đang gặp lỗi khi tìm công thức: {exc}",
+        },
+    )
 
 
 @app.get("/")
@@ -236,17 +300,22 @@ def update_session(session_id: str, request: SessionUpdateRequest):
     }
 
 
-def run_recipe_search(ingredients, top_k):
+def run_recipe_search(ingredients: List[str], top_k: int) -> List[Dict[str, Any]]:
+    """Search for recipes by ingredients."""
     query_text = ", ".join(ingredients)
 
     debug_log("Searching vector DB", query_text)
 
-    vector_results = search(query=query_text, n_results=top_k)
+    try:
+        vector_results = search(query=query_text, n_results=top_k)
+    except Exception as exc:
+        raise RecipeSearchError(str(exc)) from exc
 
     return vector_results
 
 
-def build_recipe_context(recipes):
+def build_recipe_context(recipes: List[Dict[str, Any]]) -> str:
+    """Build formatted recipe context for LLM."""
     context = ""
 
     for i, recipe in enumerate(recipes, 1):
@@ -258,6 +327,13 @@ Thong tin:
 {recipe.get('document')}
 """
     return context
+
+
+def get_nutrition_context(ingredients: List[str], recipes: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Get nutrition info for ingredients and recipes."""
+    queries = list(ingredients)
+    queries.extend(recipe.get("title", "") for recipe in recipes if recipe.get("title"))
+    return lookup_many(queries)
 
 
 @app.post("/chat")
@@ -299,7 +375,10 @@ def chat(request: ChatRequest):
                 },
             )
 
-        vector_results = run_recipe_search(ingredients=ingredients, top_k=request.top_k)
+        try:
+            vector_results = run_recipe_search(ingredients=ingredients, top_k=request.top_k)
+        except RecipeSearchError as exc:
+            return search_error_response(session_id, exc)
 
         if not vector_results:
             return chat_response(
@@ -312,14 +391,19 @@ def chat(request: ChatRequest):
             )
 
         remember_context(session_id, ingredients, vector_results)
+        nutrition_context = get_nutrition_context(ingredients, vector_results)
 
         prompt = build_prompt(
             user_ingredients=ingredients,
             vector_results=vector_results,
             user_request=user_message,
+            nutrition_context=nutrition_context,
         )
 
-        llm_response = call_llm(prompt)
+        try:
+            llm_response = call_llm(prompt)
+        except LLMServiceError as exc:
+            return llm_error_response(session_id, exc)
 
         return chat_response(
             session_id,
@@ -366,10 +450,18 @@ Nếu user hỏi:
 
 => chỉ phân tích trên danh sách món hiện có.
 
+Nếu user hỏi sâu về dinh dưỡng/calo/macro/protein/chất béo/carb của một món cụ thể:
+- trả lời tập trung vào món đó
+- ước lượng các nutrient quan trọng: calo, protein, chất béo, carb, chất xơ, đường, sodium nếu có thể
+- nói rõ đây là ước lượng nếu công thức không có định lượng chính xác
+
 Nếu tất cả món không phù hợp:
 hãy nói rõ lý do và đưa giải pháp thay thế.
 """
-        llm_response = call_llm(followup_prompt)
+        try:
+            llm_response = call_llm(followup_prompt)
+        except LLMServiceError as exc:
+            return llm_error_response(session_id, exc)
 
         return chat_response(
             session_id,
@@ -383,7 +475,10 @@ hãy nói rõ lý do và đưa giải pháp thay thế.
     if intent == "RESEARCH":
         if not previous_context:
             debug_log("Recipe search query", user_message)
-            vector_results = search(query=user_message, n_results=request.top_k)
+            try:
+                vector_results = search(query=user_message, n_results=request.top_k)
+            except Exception as exc:
+                return search_error_response(session_id, exc)
 
             if not vector_results:
                 return chat_response(
@@ -397,14 +492,19 @@ hãy nói rõ lý do và đưa giải pháp thay thế.
 
             ingredients = [user_message]
             remember_context(session_id, ingredients, vector_results)
+            nutrition_context = get_nutrition_context(ingredients, vector_results)
 
             prompt = build_prompt(
                 user_ingredients=ingredients,
                 vector_results=vector_results,
                 user_request=user_message,
+                nutrition_context=nutrition_context,
             )
 
-            llm_response = call_llm(prompt)
+            try:
+                llm_response = call_llm(prompt)
+            except LLMServiceError as exc:
+                return llm_error_response(session_id, exc)
 
             return chat_response(
                 session_id,
@@ -419,7 +519,10 @@ hãy nói rõ lý do và đưa giải pháp thay thế.
         new_query = f"{', '.join(previous_ingredients)} {user_message}"
 
         debug_log("Research query", new_query)
-        vector_results = search(query=new_query, n_results=request.top_k)
+        try:
+            vector_results = search(query=new_query, n_results=request.top_k)
+        except Exception as exc:
+            return search_error_response(session_id, exc)
 
         if not vector_results:
             return chat_response(
@@ -432,14 +535,19 @@ hãy nói rõ lý do và đưa giải pháp thay thế.
             )
 
         remember_context(session_id, previous_ingredients, vector_results)
+        nutrition_context = get_nutrition_context(previous_ingredients, vector_results)
 
         prompt = build_prompt(
             user_ingredients=previous_ingredients,
             vector_results=vector_results,
             user_request=user_message,
+            nutrition_context=nutrition_context,
         )
 
-        llm_response = call_llm(prompt)
+        try:
+            llm_response = call_llm(prompt)
+        except LLMServiceError as exc:
+            return llm_error_response(session_id, exc)
 
         return chat_response(
             session_id,
@@ -462,14 +570,17 @@ hãy nói rõ lý do và đưa giải pháp thay thế.
             )
 
         new_ingredients = extract_ingredients_from_text(user_message)
-        merged_ingredients = list(set(previous_ingredients + new_ingredients))
+        merged_ingredients = list(dict.fromkeys(previous_ingredients + new_ingredients))
 
         debug_log("Merged ingredients", merged_ingredients)
 
-        vector_results = run_recipe_search(
-            ingredients=merged_ingredients,
-            top_k=request.top_k,
-        )
+        try:
+            vector_results = run_recipe_search(
+                ingredients=merged_ingredients,
+                top_k=request.top_k,
+            )
+        except RecipeSearchError as exc:
+            return search_error_response(session_id, exc)
 
         if not vector_results:
             return chat_response(
@@ -482,14 +593,19 @@ hãy nói rõ lý do và đưa giải pháp thay thế.
             )
 
         remember_context(session_id, merged_ingredients, vector_results)
+        nutrition_context = get_nutrition_context(merged_ingredients, vector_results)
 
         prompt = build_prompt(
             user_ingredients=merged_ingredients,
             vector_results=vector_results,
             user_request=user_message,
+            nutrition_context=nutrition_context,
         )
 
-        llm_response = call_llm(prompt)
+        try:
+            llm_response = call_llm(prompt)
+        except LLMServiceError as exc:
+            return llm_error_response(session_id, exc)
 
         return chat_response(
             session_id,
@@ -512,7 +628,10 @@ Hãy trả lời thân thiện như chatbot.
 Nếu user cảm ơn thì đáp lại lịch sự.
 Nếu user chào thì chào lại.
 """
-        llm_response = call_llm(prompt)
+        try:
+            llm_response = call_llm(prompt)
+        except LLMServiceError as exc:
+            return llm_error_response(session_id, exc)
 
         return chat_response(
             session_id,

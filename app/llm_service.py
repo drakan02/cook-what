@@ -1,29 +1,32 @@
+import logging
+from typing import Any, Dict
+
 import requests
 from app.config import OPENROUTER_API_KEY, OPENROUTER_MODEL, OPENROUTER_URL
 
-
-def _llm_error_message(detail):
-    if detail:
-        return f"Mình đang gặp lỗi khi gọi mô hình AI: {detail}"
-    return "Mình đang gặp lỗi khi gọi mô hình AI. Bạn thử gửi lại sau một lát nhé."
+logger = logging.getLogger(__name__)
 
 
-def _extract_error_detail(data):
+class LLMServiceError(RuntimeError):
+    pass
+
+
+def _extract_error_detail(data: Any) -> str:
     error = data.get("error") if isinstance(data, dict) else None
     if isinstance(error, dict):
-        return error.get("message") or error.get("code")
+        return error.get("message") or error.get("code") or ""
     if isinstance(error, str):
         return error
     if isinstance(data, dict):
-        return data.get("message") or data.get("detail")
-    return None
+        return data.get("message") or data.get("detail") or ""
+    return ""
 
 
-def call_llm(prompt):
+def call_llm(prompt: str) -> str:
     if not OPENROUTER_API_KEY:
-        return _llm_error_message("thiếu OPENROUTER_API_KEY trong file .env.")
+        raise LLMServiceError("Thiếu OPENROUTER_API_KEY trong file .env.")
     if not OPENROUTER_MODEL:
-        return _llm_error_message("thiếu OPENROUTER_MODEL trong file .env.")
+        raise LLMServiceError("Thiếu OPENROUTER_MODEL trong file .env.")
 
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -31,15 +34,15 @@ def call_llm(prompt):
         "Accept": "application/json",
     }
 
-    payload = {
+    payload: Dict[str, Any] = {
         "model": OPENROUTER_MODEL,
         "messages": [
             {
                 "role": "user",
-                "content": prompt
+                "content": prompt,
             }
         ],
-        "temperature": 0.3
+        "temperature": 0.3,
     }
 
     try:
@@ -49,8 +52,10 @@ def call_llm(prompt):
             json=payload,
             timeout=90,
         )
+        response.raise_for_status()
     except requests.RequestException as exc:
-        return _llm_error_message(str(exc))
+        logger.exception("Failed to call OpenRouter")
+        raise LLMServiceError(str(exc)) from exc
 
     try:
         data = response.json()
@@ -59,18 +64,18 @@ def call_llm(prompt):
         detail = f"OpenRouter trả về phản hồi không phải JSON (HTTP {response.status_code})"
         if snippet:
             detail = f"{detail}: {snippet}"
-        return _llm_error_message(detail)
+        raise LLMServiceError(detail)
 
     if not response.ok:
         detail = _extract_error_detail(data) or f"HTTP {response.status_code}"
-        return _llm_error_message(detail)
+        raise LLMServiceError(detail)
 
     try:
         content = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
-        return _llm_error_message("OpenRouter trả về JSON không có nội dung trả lời.")
+        raise LLMServiceError("OpenRouter trả về JSON không có nội dung trả lời.")
 
     if not content:
-        return _llm_error_message("mô hình trả về nội dung rỗng.")
+        raise LLMServiceError("Mô hình trả về nội dung rỗng.")
 
-    return content
+    return str(content)

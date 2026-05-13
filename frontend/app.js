@@ -393,8 +393,12 @@ async function finishRenameSession(sessionId, inputEl, cancel = false) {
 function renderInlineMarkdown(value) {
   let output = escapeHtml(value);
   output = output.replace(
-    /(https?:\/\/[^\s<]+)/g,
-    '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>'
+    /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+    '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>'
+  );
+  output = output.replace(
+    /(^|[^"'>])(https?:\/\/[^\s<]+)/g,
+    '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>'
   );
   output = output.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   output = output.replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
@@ -454,7 +458,7 @@ function renderMarkdown(content) {
 
   const flushParagraph = () => {
     if (!paragraph.length) return;
-    blocks.push(`<p>${renderInlineMarkdown(paragraph.join(" "))}</p>`);
+    blocks.push(`<p>${paragraph.map(renderInlineMarkdown).join("<br>")}</p>`);
     paragraph = [];
   };
 
