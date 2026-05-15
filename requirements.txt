@@ -8,3 +8,4 @@ openai
 chromadb
 psycopg[binary]
 piper-tts
+python-multipart

@@ -11,6 +11,12 @@ const deleteModal = document.querySelector("#deleteModal");
 const deleteModalCancel = document.querySelector("#deleteModalCancel");
 const deleteModalConfirm = document.querySelector("#deleteModalConfirm");
 const micButton = document.querySelector("#micButton");
+const imageUploadButton = document.querySelector("#imageUploadButton");
+const imageFileInput = document.querySelector("#imageFileInput");
+const imagePreviewBar = document.querySelector("#imagePreviewBar");
+const imagePreviewThumb = document.querySelector("#imagePreviewThumb");
+const imagePreviewName = document.querySelector("#imagePreviewName");
+const imageRemoveButton = document.querySelector("#imageRemoveButton");
 
 let currentSessionId = localStorage.getItem("cookwhat_session_id") || crypto.randomUUID();
 let isSending = false;
@@ -18,6 +24,9 @@ let openSessionMenu = null;
 let editingSessionId = null;
 let pendingRenameSessionId = null;
 let deleteTargetSession = null;
+
+// Pending image attachment state
+let pendingImageFile = null;
 
 // TTS state
 let currentAudio = null;
@@ -602,6 +611,23 @@ function createAnswerActions(content, prefetch = null) {
   return actions;
 }
 
+/**
+ * Parse a stored user message that may contain the VLM-combined format:
+ *   "[Mô tả ảnh]: <description>\n\n[Câu hỏi của bạn]: <text>"
+ * Returns { hasImageContext, displayText }.
+ */
+function parseUserMessage(content) {
+  // Format: combined image description + question
+  const combined = content.match(
+    /^\[Mô tả ảnh\]:[\s\S]*?\n\n\[Câu hỏi của bạn\]:\s*([\s\S]*)$/
+  );
+  if (combined) return { hasImageContext: true, displayText: combined[1].trim() };
+  // Format: image description only (no typed question)
+  if (content.startsWith("[Mô tả ảnh]:"))
+    return { hasImageContext: true, displayText: "" };
+  return { hasImageContext: false, displayText: content };
+}
+
 function addMessage(role, content, options = {}) {
   const empty = messagesEl.querySelector(".empty-state");
   if (empty) empty.remove();
@@ -616,7 +642,44 @@ function addMessage(role, content, options = {}) {
 
   const bubble = document.createElement("div");
   bubble.className = "bubble";
-  bubble.innerHTML = safeRole === "assistant" ? renderMarkdown(safeContent) : escapeHtml(safeContent);
+
+  if (safeRole === "assistant") {
+    bubble.innerHTML = renderMarkdown(safeContent);
+  } else {
+    // ── User bubble ──────────────────────────────────────────────────────────
+    // 1. If we have a live image data URL (just uploaded), show thumbnail
+    if (options.imageDataUrl) {
+      const imgWrap = document.createElement("div");
+      imgWrap.className = "user-bubble-image";
+      const img = document.createElement("img");
+      img.src = options.imageDataUrl;
+      img.alt = "Ảnh đính kèm";
+      imgWrap.appendChild(img);
+      bubble.appendChild(imgWrap);
+    } else {
+      // 2. Loaded from history: detect [Mô tả ảnh]: prefix and clean it up
+      const parsed = parseUserMessage(safeContent);
+      if (parsed.hasImageContext) {
+        const badge = document.createElement("div");
+        badge.className = "user-image-badge";
+        badge.textContent = "📷 Hình ảnh";
+        bubble.appendChild(badge);
+        if (parsed.displayText) {
+          const textNode = document.createElement("span");
+          textNode.textContent = parsed.displayText;
+          bubble.appendChild(textNode);
+        }
+        row.appendChild(bubble);
+        messagesEl.appendChild(row);
+        scrollToBottom();
+        return;
+      }
+    }
+
+    // Plain text (no image context)
+    const textNode = document.createTextNode(safeContent);
+    bubble.appendChild(textNode);
+  }
 
   if (safeRole === "assistant" && !options.loading) {
     const prefetch = prefetchFirstChunk(safeContent);
@@ -633,6 +696,7 @@ function setLoading(enabled) {
   sendButton.disabled = enabled;
   input.disabled = enabled;
   if (micButton) micButton.disabled = enabled;
+  if (imageUploadButton) imageUploadButton.disabled = enabled;
 }
 
 function autoResizeInput() {
@@ -768,16 +832,74 @@ async function loadMessages(sessionId) {
 }
 
 async function sendMessage(content) {
-  addMessage("user", content);
+  // Capture the image data URL BEFORE clearing the pending state
+  const imageDataUrl =
+    pendingImageFile && imagePreviewThumb && imagePreviewThumb.src
+      ? imagePreviewThumb.src
+      : null;
+
+  // Show the user bubble with image thumbnail + text immediately
+  addMessage("user", content, { imageDataUrl });
   addMessage("assistant", "Đang suy nghĩ...", { id: "loadingMessage", loading: true });
   setLoading(true);
+
+  // Capture and clear pending image before any async work
+  const imageFile = pendingImageFile;
+  clearPendingImage();
+
+  let finalMessage = content;
+
+  // ── VLM preprocessing layer ──────────────────────────────────────────────
+  if (imageFile) {
+    try {
+      const loadingEl = document.querySelector("#loadingMessage .bubble");
+      if (loadingEl) loadingEl.textContent = "Đang phân tích hình ảnh...";
+
+      const formData = new FormData();
+      formData.append("image", imageFile);
+      formData.append("query", content);
+
+      const vlmResponse = await fetch("/api/analyze-image", {
+        method: "POST",
+        body: formData,
+      });
+
+      const vlmData = await vlmResponse.json().catch(() => ({}));
+
+      if (!vlmResponse.ok) {
+        const loading = document.querySelector("#loadingMessage");
+        if (loading) loading.remove();
+        addMessage("assistant", vlmData.error || `Lỗi phân tích ảnh (HTTP ${vlmResponse.status}).`);
+        setLoading(false);
+        input.focus();
+        return;
+      }
+
+      const description = (vlmData.description || "").trim();
+      if (description) {
+        finalMessage = content
+          ? `[Mô tả ảnh]: ${description}\n\n[Câu hỏi của bạn]: ${content}`
+          : `[Mô tả ảnh]: ${description}`;
+      }
+
+      if (loadingEl) loadingEl.textContent = "Đang suy nghĩ...";
+    } catch (err) {
+      const loading = document.querySelector("#loadingMessage");
+      if (loading) loading.remove();
+      addMessage("assistant", `Không kết nối được dịch vụ phân tích ảnh: ${err.message}`);
+      setLoading(false);
+      input.focus();
+      return;
+    }
+  }
+  // ── end VLM layer ─────────────────────────────────────────────────────────
 
   try {
     const response = await fetch("/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        message: content,
+        message: finalMessage,
         session_id: currentSessionId,
         top_k: 5,
       }),
@@ -811,6 +933,56 @@ async function sendMessage(content) {
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recognition = null;
 let isRecording = false;
+
+// ── Image attachment helpers ─────────────────────────────────────────────────
+
+function clearPendingImage() {
+  pendingImageFile = null;
+  if (imagePreviewBar) imagePreviewBar.hidden = true;
+  if (imagePreviewThumb) imagePreviewThumb.src = "";
+  if (imagePreviewName) imagePreviewName.textContent = "";
+  if (imageFileInput) imageFileInput.value = "";
+  if (imageUploadButton) imageUploadButton.classList.remove("has-image");
+}
+
+function attachPendingImage(file) {
+  if (!file) return;
+  pendingImageFile = file;
+
+  // Show thumbnail preview
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    if (imagePreviewThumb) imagePreviewThumb.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+
+  if (imagePreviewName) {
+    const shortName = file.name.length > 28 ? file.name.slice(0, 25) + "…" : file.name;
+    imagePreviewName.textContent = shortName;
+  }
+  if (imagePreviewBar) imagePreviewBar.hidden = false;
+  if (imageUploadButton) imageUploadButton.classList.add("has-image");
+}
+
+if (imageUploadButton && imageFileInput) {
+  imageUploadButton.addEventListener("click", () => {
+    if (!isSending) imageFileInput.click();
+  });
+
+  imageFileInput.addEventListener("change", () => {
+    const file = imageFileInput.files?.[0];
+    if (file) attachPendingImage(file);
+  });
+}
+
+if (imageRemoveButton) {
+  imageRemoveButton.addEventListener("click", () => {
+    clearPendingImage();
+    input.focus();
+  });
+}
+
+// ── end image attachment helpers ─────────────────────────────────────────────
 
 if (SpeechRecognition && micButton) {
   recognition = new SpeechRecognition();
@@ -892,7 +1064,9 @@ form.addEventListener("submit", (event) => {
   if (isSending) return;
 
   const content = input.value.trim();
-  if (!content) return;
+
+  // Require either text content or a pending image (or both)
+  if (!content && !pendingImageFile) return;
 
   input.value = "";
   autoResizeInput();
