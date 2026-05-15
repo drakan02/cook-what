@@ -644,7 +644,17 @@ function addMessage(role, content, options = {}) {
   bubble.className = "bubble";
 
   if (safeRole === "assistant") {
-    bubble.innerHTML = renderMarkdown(safeContent);
+    if (options.loading) {
+      bubble.innerHTML = `
+        <div class="loading-bubble-inner">
+          <div class="typing-indicator" aria-label="Đang xử lý">
+            <span></span><span></span><span></span>
+          </div>
+          <span class="loading-label"></span>
+        </div>`;
+    } else {
+      bubble.innerHTML = renderMarkdown(safeContent);
+    }
   } else {
     // ── User bubble ──────────────────────────────────────────────────────────
     // 1. If we have a live image data URL (just uploaded), show thumbnail
@@ -852,7 +862,7 @@ async function sendMessage(content) {
   // ── VLM preprocessing layer ──────────────────────────────────────────────
   if (imageFile) {
     try {
-      const loadingEl = document.querySelector("#loadingMessage .bubble");
+      const loadingEl = document.querySelector("#loadingMessage .loading-label");
       if (loadingEl) loadingEl.textContent = "Đang phân tích hình ảnh...";
 
       const formData = new FormData();
@@ -882,7 +892,7 @@ async function sendMessage(content) {
           : `[Mô tả ảnh]: ${description}`;
       }
 
-      if (loadingEl) loadingEl.textContent = "Đang suy nghĩ...";
+      if (loadingEl) loadingEl.textContent = "";
     } catch (err) {
       const loading = document.querySelector("#loadingMessage");
       if (loading) loading.remove();
@@ -982,7 +992,74 @@ if (imageRemoveButton) {
   });
 }
 
+// ── Drag-and-drop onto the composer ──────────────────────────────────────────
+// Use a counter to avoid flickering when pointer moves over child elements.
+let dragEnterCount = 0;
+
+form.addEventListener("dragenter", (e) => {
+  if (!e.dataTransfer?.types?.includes("Files")) return;
+  e.preventDefault();
+  dragEnterCount++;
+  form.classList.add("drag-over");
+});
+
+form.addEventListener("dragover", (e) => {
+  if (!e.dataTransfer?.types?.includes("Files")) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "copy";
+});
+
+form.addEventListener("dragleave", () => {
+  dragEnterCount--;
+  if (dragEnterCount <= 0) {
+    dragEnterCount = 0;
+    form.classList.remove("drag-over");
+  }
+});
+
+form.addEventListener("drop", (e) => {
+  e.preventDefault();
+  dragEnterCount = 0;
+  form.classList.remove("drag-over");
+  if (isSending) return;
+
+  const file = Array.from(e.dataTransfer?.files || []).find((f) =>
+    f.type.startsWith("image/")
+  );
+  if (file) {
+    attachPendingImage(file);
+    input.focus();
+  }
+});
+
+// ── Paste image from clipboard ────────────────────────────────────────────────
+document.addEventListener("paste", (e) => {
+  if (isSending) return;
+
+  const items = Array.from(e.clipboardData?.items || []);
+  const imageItem = items.find((item) => item.type.startsWith("image/"));
+  if (!imageItem) return;
+
+  // Only intercept if the paste isn't inside a text field that has text selected
+  // (allow normal text paste to work unaffected)
+  const activeEl = document.activeElement;
+  const isTextInput =
+    activeEl &&
+    (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA") &&
+    activeEl !== input;
+  if (isTextInput) return;
+
+  e.preventDefault();
+  const file = imageItem.getAsFile();
+  if (file) {
+    attachPendingImage(file);
+    showToast("Đã dán ảnh từ clipboard 📋", 2000);
+    input.focus();
+  }
+});
+
 // ── end image attachment helpers ─────────────────────────────────────────────
+
 
 if (SpeechRecognition && micButton) {
   recognition = new SpeechRecognition();
@@ -1149,3 +1226,55 @@ setCurrentSession(currentSessionId);
 renderEmpty();
 loadMessages(currentSessionId);
 loadSessions();
+
+// ── Dark mode ───────────────────────────────────────────────────────────
+const themeToggleButton = document.querySelector("#themeToggleButton");
+const themeIcon = document.querySelector("#themeIcon");
+
+const SUN_PATH = `<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/>`;
+const MOON_PATH = `<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>`;
+
+function applyTheme(dark) {
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+  if (themeIcon) themeIcon.innerHTML = dark ? SUN_PATH : MOON_PATH;
+  if (themeToggleButton) {
+    themeToggleButton.title = dark ? "Chuyển sang Light mode" : "Chuyển sang Dark mode";
+    themeToggleButton.setAttribute("aria-label", themeToggleButton.title);
+  }
+  localStorage.setItem("cookwhat_theme", dark ? "dark" : "light");
+}
+
+// Init from saved preference or system preference
+(function initTheme() {
+  const saved = localStorage.getItem("cookwhat_theme");
+  const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  applyTheme(saved ? saved === "dark" : prefersDark);
+})();
+
+themeToggleButton?.addEventListener("click", () => {
+  applyTheme(document.documentElement.dataset.theme !== "dark");
+});
+
+// ── Sidebar collapse ─────────────────────────────────────────────────
+const sidebarCollapseButton = document.querySelector("#sidebarCollapseButton");
+const appShell = document.querySelector(".app-shell");
+
+function setSidebarCollapsed(collapsed) {
+  appShell?.classList.toggle("sidebar-collapsed", collapsed);
+  if (sidebarCollapseButton) {
+    sidebarCollapseButton.title = collapsed ? "Mở rộng sidebar" : "Thu gọn sidebar";
+    sidebarCollapseButton.setAttribute("aria-label", sidebarCollapseButton.title);
+  }
+  localStorage.setItem("cookwhat_sidebar_collapsed", collapsed ? "1" : "0");
+}
+
+// Init collapsed state from localStorage
+(function initSidebar() {
+  const saved = localStorage.getItem("cookwhat_sidebar_collapsed");
+  if (saved === "1") setSidebarCollapsed(true);
+})();
+
+sidebarCollapseButton?.addEventListener("click", () => {
+  const isCollapsed = appShell?.classList.contains("sidebar-collapsed");
+  setSidebarCollapsed(!isCollapsed);
+});

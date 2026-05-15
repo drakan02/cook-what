@@ -12,6 +12,47 @@
   --shadow: 0 18px 45px rgba(31, 35, 40, 0.08);
   --mic-active: #e53935;
   --mic-active-dark: #b71c1c;
+  --sidebar-w: 292px;
+  --topbar-bg: rgba(246, 243, 238, 0.92);
+}
+
+/* ─── Dark mode ──────────────────────────────────────────────────── */
+[data-theme="dark"] {
+  --bg: #0f1117;
+  --panel: #1a1d27;
+  --panel-soft: #1e2130;
+  --text: #e0e6f0;
+  --muted: #8b96a8;
+  --line: #2a2f3d;
+  --accent: #22a693;
+  --accent-dark: #1a8a79;
+  --user: #22a693;
+  --assistant: #1a1d27;
+  --shadow: 0 18px 45px rgba(0, 0, 0, 0.35);
+  --topbar-bg: rgba(15, 17, 23, 0.92);
+}
+[data-theme="dark"] .topbar {
+  background: var(--topbar-bg);
+}
+[data-theme="dark"] .confirm-dialog {
+  background: var(--panel);
+  color: var(--text);
+}
+[data-theme="dark"] .confirm-dialog p { color: var(--muted); }
+[data-theme="dark"] .confirm-button.secondary {
+  color: var(--text);
+  background: var(--panel-soft);
+}
+[data-theme="dark"] .confirm-button.secondary:hover { background: var(--line); }
+[data-theme="dark"] .message-action-button {
+  color: var(--muted);
+  background: var(--panel-soft);
+  border-color: var(--line);
+}
+[data-theme="dark"] .message-action-button:hover {
+  color: var(--accent);
+  background: rgba(34, 166, 147, 0.12);
+  border-color: var(--accent);
 }
 
 * {
@@ -32,8 +73,14 @@ textarea {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 292px 1fr;
+  grid-template-columns: var(--sidebar-w) 1fr;
   min-height: 100vh;
+  transition: grid-template-columns 220ms ease;
+}
+
+/* Sidebar collapsed (desktop only) */
+.app-shell.sidebar-collapsed {
+  grid-template-columns: 0px 1fr;
 }
 
 .sidebar {
@@ -41,7 +88,7 @@ textarea {
   top: 0;
   left: 0;
 
-  width: 292px;
+  width: var(--sidebar-w);
   height: 100vh;
 
   overflow-y: auto;
@@ -53,6 +100,12 @@ textarea {
   color: #f8fafc;
   background: #17211f;
   border-right: 1px solid rgba(255, 255, 255, 0.08);
+  transition: transform 220ms ease;
+}
+
+.app-shell.sidebar-collapsed .sidebar {
+  transform: translateX(-110%);
+  pointer-events: none;
 }
 
 .brand-row {
@@ -167,8 +220,25 @@ textarea {
   align-items: center;
   gap: 14px;
   padding: 18px clamp(16px, 4vw, 44px);
-  background: rgba(246, 243, 238, 0.92);
+  background: var(--topbar-bg, rgba(246, 243, 238, 0.92));
   border-bottom: 1px solid var(--line);
+}
+
+.topbar-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* Rotate the sidebar collapse icon when sidebar is collapsed */
+.app-shell.sidebar-collapsed #sidebarCollapseIcon {
+  transform: scaleX(-1);
 }
 
 .topbar h1 {
@@ -342,6 +412,7 @@ textarea {
 }
 
 .composer {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 0;
@@ -1076,5 +1147,73 @@ textarea {
   font-weight: 600;
   letter-spacing: 0.02em;
 }
+
+/* ─── Typing dots (loading bubble) ───────────────────────────── */
+.typing-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 0;
+}
+
+.typing-indicator span {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  animation: typingBounce 1.2s ease-in-out infinite;
+}
+
+.typing-indicator span:nth-child(2) { animation-delay: 0.18s; }
+.typing-indicator span:nth-child(3) { animation-delay: 0.36s; }
+
+@keyframes typingBounce {
+  0%, 60%, 100% { transform: translateY(0);   opacity: 0.35; }
+  30%            { transform: translateY(-7px); opacity: 1;    }
+}
+
+.loading-bubble-inner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.loading-label {
+  font-size: 13px;
+  font-style: italic;
+  color: var(--muted);
+}
+
+/* ─── Drag-and-drop highlight ─────────────────────────────────── */
+.composer.drag-over {
+  border-color: var(--accent);
+  background: rgba(23, 107, 95, 0.06);
+  box-shadow: 0 0 0 3px rgba(23, 107, 95, 0.18), var(--shadow);
+  transition: border-color 0.12s, background 0.12s, box-shadow 0.12s;
+}
+
+[data-theme="dark"] .composer.drag-over {
+  background: rgba(34, 166, 147, 0.08);
+  box-shadow: 0 0 0 3px rgba(34, 166, 147, 0.22), var(--shadow);
+}
+
+.composer.drag-over::after {
+  content: "\1F5BC\FE0F  Thả ảnh vào đây";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--accent);
+  background: transparent;
+  pointer-events: none;
+  z-index: 10;
+}
+
+
 
 
