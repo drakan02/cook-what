@@ -1,4 +1,5 @@
 import io
+import re
 import logging
 import os
 import sys
@@ -13,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from piper import PiperVoice
+from piper.config import SynthesisConfig
 
 from app import db
 from app.config import validate_config
@@ -220,10 +222,60 @@ def text_to_speech(request: TTSRequest):
             status_code=503,
         )
 
+    # Khoảng lặng giữa các câu (giây) — điều chỉnh tùy ý
+    SENTENCE_SILENCE_SEC = 0.45   # sau dấu . ! ?
+    COMMA_SILENCE_SEC    = 0.20   # sau dấu ,
+
     try:
+        syn_config = SynthesisConfig(length_scale=1.3)
+
+        sample_rate = sample_width = sample_channels = None
+        all_frames = bytearray()
+
+        # Tách text thành các đoạn con theo dấu phẩy/chấm để kiểm soát pause
+        segments = re.split(r'([,،])', text)
+        # Ghép lại segment + dấu phẩy kề
+        merged: list[str] = []
+        i = 0
+        while i < len(segments):
+            part = segments[i]
+            if i + 1 < len(segments) and segments[i + 1] in (',', '،'):
+                merged.append(part + segments[i + 1])
+                i += 2
+            else:
+                if part.strip():
+                    merged.append(part)
+                i += 1
+
+        for seg_idx, segment in enumerate(merged):
+            seg_text = segment.strip()
+            if not seg_text:
+                continue
+
+            is_comma_end = seg_text.endswith((',', '،'))
+
+            for chunk in piper_voice.synthesize(seg_text, syn_config=syn_config):
+                if sample_rate is None:
+                    sample_rate    = chunk.sample_rate
+                    sample_width   = chunk.sample_width
+                    sample_channels = chunk.sample_channels
+
+                all_frames.extend(chunk.audio_int16_bytes)
+
+                # Thêm silence sau mỗi câu (dấu . ! ? được phonemizer xử lý)
+                silence_sec = COMMA_SILENCE_SEC if is_comma_end else SENTENCE_SILENCE_SEC
+                n_silence_bytes = int(sample_rate * silence_sec) * sample_width * sample_channels
+                all_frames.extend(bytes(n_silence_bytes))
+
+        if sample_rate is None:
+            return JSONResponse({"error": "Không có audio được tạo"}, status_code=500)
+
         fp = io.BytesIO()
         with wave.open(fp, "wb") as wav_file:
-            piper_voice.synthesize_wav(text, wav_file)
+            wav_file.setnchannels(sample_channels)
+            wav_file.setsampwidth(sample_width)
+            wav_file.setframerate(sample_rate)
+            wav_file.writeframes(bytes(all_frames))
         fp.seek(0)
         return StreamingResponse(
             fp,
@@ -233,6 +285,7 @@ def text_to_speech(request: TTSRequest):
     except Exception as e:
         traceback.print_exc()
         return JSONResponse({"error": str(e)}, status_code=500)
+
 
 
 
