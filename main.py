@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 from uuid import uuid4
 
-from fastapi import FastAPI
+from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -24,6 +24,7 @@ from app.llm_service import LLMServiceError, call_llm
 from app.nutrition_service import lookup_many
 from app.prompt_builder import build_prompt
 from app.schemas import ChatRequest, SessionUpdateRequest, TTSRequest
+from app.vlm_service import VLMServiceError, describe_image
 from src.vectordb import search
 
 # Setup logging
@@ -287,7 +288,47 @@ def text_to_speech(request: TTSRequest):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@app.post("/api/analyze-image")
+async def analyze_image(
+    image: UploadFile = File(...),
+    query: str = Form(default=""),
+):
+    """Preprocess layer: convert an uploaded image to descriptive text via VLM.
 
+    The frontend sends the image (and an optional user question) here.
+    The returned ``description`` is prepended to the user's chat message before it reaches the core chatbot pipeline.
+    """
+    # Validate content-type loosely
+    content_type = (image.content_type or "").lower()
+    if not content_type.startswith("image/"):
+        return JSONResponse(
+            {"error": "File tải lên phải là hình ảnh (JPEG, PNG, WEBP, …)"},
+            status_code=400,
+        )
+
+    # Cap file size at 10 MB to avoid abusing the API
+    MAX_BYTES = 10 * 1024 * 1024
+    image_bytes = await image.read()
+    if len(image_bytes) > MAX_BYTES:
+        return JSONResponse(
+            {"error": "Hình ảnh quá lớn. Vui lòng chọn ảnh dưới 10 MB."},
+            status_code=413,
+        )
+
+    try:
+        description = describe_image(
+            image_bytes=image_bytes,
+            mime_type=content_type or "image/jpeg",
+            user_query=query or None,
+        )
+    except VLMServiceError as exc:
+        logger.error(f"VLM error: {exc}")
+        return JSONResponse(
+            {"error": f"Không thể phân tích ảnh: {exc}"},
+            status_code=502,
+        )
+
+    return JSONResponse({"description": description})
 
 
 @app.get("/api/sessions")
