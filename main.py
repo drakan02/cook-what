@@ -18,6 +18,13 @@ from piper.config import SynthesisConfig
 
 from app import db
 from app.config import validate_config
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse
+
+from app.schemas import ChatRequest
+from app.prompt_builder import build_prompt
+from app.llm_service import call_llm_stream
 from app.ingredient_extract import extract_ingredients_from_text
 from app.intent_router import detect_intent
 from app.llm_service import LLMServiceError, call_llm
@@ -493,23 +500,11 @@ def chat(request: ChatRequest):
             user_request=user_message,
             nutrition_context=nutrition_context,
         )
-
-        try:
-            llm_response = call_llm(prompt)
-        except LLMServiceError as exc:
-            return llm_error_response(session_id, exc)
-
-        return chat_response(
-            session_id,
-            {
-                "type": "new_search",
-                "session_id": session_id,
-                "ingredients": ingredients,
-                "response": llm_response,
-            },
+        return StreamingResponse(
+            call_llm_stream(prompt),
+            media_type="text/plain"
         )
-
-    if intent == "FOLLOW_UP":
+    elif intent == "FOLLOW_UP":
         if not previous_context:
             return chat_response(
                 session_id,
@@ -536,6 +531,18 @@ User hỏi tiếp:
 "{user_message}"
 
 Hãy trả lời tự nhiên như ChatGPT bằng tiếng Việt.
+Khi nhắc tới món nào:
+- luôn ghi rõ tên món
+- luôn kèm Link công thức của món đó
+- có xuống dòng 
+- có bullet points
+
+Ví dụ:
+- Gà chiên nước mắm
+Link công thức: https://...
+
+- Gà hấp gừng
+Link công thức: https://...
 
 Nếu user hỏi:
 - món nào healthy hơn
@@ -552,21 +559,11 @@ Nếu user hỏi sâu về dinh dưỡng/calo/macro/protein/chất béo/carb c�
 Nếu tất cả món không phù hợp:
 hãy nói rõ lý do và đưa giải pháp thay thế.
 """
-        try:
-            llm_response = call_llm(followup_prompt)
-        except LLMServiceError as exc:
-            return llm_error_response(session_id, exc)
-
-        return chat_response(
-            session_id,
-            {
-                "type": "follow_up",
-                "session_id": session_id,
-                "response": llm_response,
-            },
+        return StreamingResponse(
+            call_llm_stream(followup_prompt),
+            media_type="text/plain"
         )
-
-    if intent == "RESEARCH":
+    elif intent == "RESEARCH":
         if not previous_context:
             debug_log("Recipe search query", user_message)
             try:
@@ -637,19 +634,9 @@ hãy nói rõ lý do và đưa giải pháp thay thế.
             user_request=user_message,
             nutrition_context=nutrition_context,
         )
-
-        try:
-            llm_response = call_llm(prompt)
-        except LLMServiceError as exc:
-            return llm_error_response(session_id, exc)
-
-        return chat_response(
-            session_id,
-            {
-                "type": "research",
-                "session_id": session_id,
-                "response": llm_response,
-            },
+        return StreamingResponse(
+            call_llm_stream(prompt),
+            media_type="text/plain"
         )
 
     if intent == "ADD_INGREDIENT":
@@ -695,23 +682,11 @@ hãy nói rõ lý do và đưa giải pháp thay thế.
             user_request=user_message,
             nutrition_context=nutrition_context,
         )
-
-        try:
-            llm_response = call_llm(prompt)
-        except LLMServiceError as exc:
-            return llm_error_response(session_id, exc)
-
-        return chat_response(
-            session_id,
-            {
-                "type": "add_ingredient",
-                "session_id": session_id,
-                "ingredients": merged_ingredients,
-                "response": llm_response,
-            },
+        return StreamingResponse(
+            call_llm_stream(prompt),
+            media_type="text/plain"
         )
-
-    if intent == "SMALL_TALK":
+    elif intent == "SMALL_TALK":
         prompt = f"""
 Bạn là CookWhat AI.
 
@@ -722,25 +697,11 @@ Hãy trả lời thân thiện như chatbot.
 Nếu user cảm ơn thì đáp lại lịch sự.
 Nếu user chào thì chào lại.
 """
-        try:
-            llm_response = call_llm(prompt)
-        except LLMServiceError as exc:
-            return llm_error_response(session_id, exc)
-
-        return chat_response(
-            session_id,
-            {
-                "type": "small_talk",
-                "session_id": session_id,
-                "response": llm_response,
-            },
+        return StreamingResponse(
+            call_llm_stream(prompt),
+            media_type="text/plain"
         )
-
-    return chat_response(
-        session_id,
-        {
-            "type": "fallback",
-            "session_id": session_id,
-            "response": "Mình chưa hiểu rõ yêu cầu của bạn. Bạn có thể nói rõ hơn không?",
-        },
-    )
+    return JSONResponse({
+        "type": "fallback",
+        "response": "Mình chưa hiểu rõ yêu cầu của bạn. Bạn có thể nói rõ hơn không?"
+    })
