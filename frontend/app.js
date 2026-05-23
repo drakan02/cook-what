@@ -6,7 +6,7 @@ const sendButton = document.querySelector("#sendButton");
 const newChatButton = document.querySelector("#newChatButton");
 const openSidebar = document.querySelector("#openSidebar");
 const closeSidebar = document.querySelector("#closeSidebar");
-const sidebar = document.querySelector(".sidebar");
+const appShell = document.querySelector(".app-shell");
 const deleteModal = document.querySelector("#deleteModal");
 const deleteModalCancel = document.querySelector("#deleteModalCancel");
 const deleteModalConfirm = document.querySelector("#deleteModalConfirm");
@@ -553,6 +553,80 @@ function scrollToBottom() {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
+function updateTypingBubble(bubble, text, { charDelay = 18, done = false, onDone = null } = {}) {
+  if (!bubble) return;
+
+  if (!bubble._typingState) {
+    bubble._typingState = {
+      displayed: "",
+      target: "",
+      buffer: "",
+      interval: null,
+      doneRequested: false,
+      charDelay,
+      onDone: typeof onDone === "function" ? onDone : null,
+    };
+    bubble.textContent = "";
+  }
+
+  const state = bubble._typingState;
+  const fullText = String(text || "");
+  if (fullText.length > state.target.length) {
+    state.buffer += fullText.slice(state.target.length);
+  } else if (fullText.length < state.target.length) {
+    state.displayed = fullText;
+    state.buffer = "";
+    bubble.innerHTML = renderMarkdown(state.displayed);
+  }
+
+  state.target = fullText;
+  state.doneRequested = done;
+  state.charDelay = charDelay;
+  if (typeof onDone === "function") state.onDone = onDone;
+
+  function finalize() {
+    if (!bubble._typingState) return;
+    const currentState = bubble._typingState;
+    if (currentState.interval) {
+      clearInterval(currentState.interval);
+      currentState.interval = null;
+    }
+    const finalText = currentState.target;
+    const callback = currentState.onDone;
+    bubble._typingState = null;
+    bubble.innerHTML = renderMarkdown(finalText);
+    if (typeof callback === "function") callback();
+  }
+
+  function tick() {
+    if (!bubble._typingState) return;
+    const currentState = bubble._typingState;
+    if (currentState.buffer.length > 0) {
+      currentState.displayed += currentState.buffer[0];
+      currentState.buffer = currentState.buffer.slice(1);
+      bubble.innerHTML = renderMarkdown(currentState.displayed);
+      scrollToBottom();
+      return;
+    }
+
+    if (currentState.doneRequested) {
+      finalize();
+      return;
+    }
+
+    clearInterval(currentState.interval);
+    currentState.interval = null;
+  }
+
+  if (!state.interval && state.buffer.length) {
+    state.interval = setInterval(tick, state.charDelay);
+  }
+
+  if (done && !state.interval && !state.buffer.length) {
+    finalize();
+  }
+}
+
 function renderEmpty() {
   messagesEl.innerHTML = `
     <div class="empty-state">
@@ -701,6 +775,132 @@ function addMessage(role, content, options = {}) {
   scrollToBottom();
 }
 
+function createStreamingAssistantMessage() {
+  const loading = document.querySelector("#loadingMessage");
+  if (loading) loading.remove();
+
+  const row = document.createElement("div");
+  row.className = "message-row assistant";
+
+  const bubble = document.createElement("div");
+  bubble.className = "bubble";
+  bubble.innerHTML = "";
+
+  row.appendChild(bubble);
+  messagesEl.appendChild(row);
+  scrollToBottom();
+
+  return row;
+}
+
+function updateStreamingAssistantMessage(row, content, done = false) {
+  if (!row) return;
+
+  const bubble = row.querySelector(".bubble");
+  if (!bubble) return;
+
+  const actions = row.querySelector(".message-actions");
+  if (actions) actions.remove();
+
+  updateTypingBubble(bubble, content, {
+    charDelay: 12,
+    done,
+    onDone() {
+      bubble.appendChild(createAnswerActions(content, prefetchFirstChunk(content)));
+    },
+  });
+
+  scrollToBottom();
+}
+
+async function readChatResponse(response) {
+  const contentType = response.headers.get("content-type") || "";
+  const sessionId = response.headers.get("x-session-id");
+
+  if (contentType.includes("application/json")) {
+    const data = await response.json().catch(() => ({}));
+    return {
+      mode: "json",
+      sessionId: data.session_id || sessionId,
+      text: data.response || data.detail || data.error || "",
+      payload: data,
+    };
+  }
+
+  if (!response.body) {
+    const text = await response.text();
+    return {
+      mode: "text",
+      sessionId,
+      text,
+    };
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let text = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    text += decoder.decode(value, { stream: true });
+  }
+
+  text += decoder.decode();
+
+  return {
+    mode: "text",
+    sessionId,
+    text,
+  };
+}
+
+async function streamAssistantResponse(response) {
+  const contentType = response.headers.get("content-type") || "";
+  const sessionId = response.headers.get("x-session-id");
+
+  if (contentType.includes("application/json")) {
+    const data = await response.json().catch(() => ({}));
+    return {
+      sessionId: data.session_id || sessionId,
+      text: data.response || data.detail || data.error || "",
+      payload: data,
+      streamed: false,
+    };
+  }
+
+  if (!response.body) {
+    const text = await response.text();
+    return {
+      sessionId,
+      text,
+      streamed: false,
+    };
+  }
+
+  const row = createStreamingAssistantMessage();
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let fullText = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+
+    fullText += decoder.decode(value, { stream: true });
+    updateStreamingAssistantMessage(row, fullText, false);
+  }
+
+  fullText += decoder.decode();
+  updateStreamingAssistantMessage(row, fullText, true);
+
+  return {
+    sessionId,
+    text: fullText,
+    streamed: true,
+  };
+}
+
 function setLoading(enabled) {
   isSending = enabled;
   sendButton.disabled = enabled;
@@ -764,7 +964,6 @@ async function loadSessions() {
       setCurrentSession(session.id);
       loadMessages(session.id);
       loadSessions();
-      sidebar.classList.remove("open");
     });
 
     menuTrigger.addEventListener("click", (event) => {
@@ -915,17 +1114,24 @@ async function sendMessage(content) {
       }),
     });
 
-    const data = await response.json().catch(() => ({}));
-    const loading = document.querySelector("#loadingMessage");
-    if (loading) loading.remove();
-
     if (!response.ok) {
-      addMessage("assistant", data.detail || data.error || `Backend trả về lỗi HTTP ${response.status}.`);
+      const loading = document.querySelector("#loadingMessage");
+      if (loading) loading.remove();
+
+      const errorResult = await readChatResponse(response);
+      addMessage("assistant", errorResult.text || `Backend trả về lỗi HTTP ${response.status}.`);
       return;
     }
 
-    setCurrentSession(data.session_id || currentSessionId);
-    addMessage("assistant", data.response || "Mình chưa có phản hồi phù hợp.");
+    const result = await streamAssistantResponse(response);
+    setCurrentSession(result.sessionId || currentSessionId);
+
+    if (!result.streamed) {
+      const loading = document.querySelector("#loadingMessage");
+      if (loading) loading.remove();
+      addMessage("assistant", result.text || "Mình chưa có phản hồi phù hợp.");
+    }
+
     await loadSessions();
   } catch {
     const loading = document.querySelector("#loadingMessage");
@@ -1175,6 +1381,7 @@ document.addEventListener("keydown", (event) => {
   }
 
   closeSessionMenu();
+  setSidebarOpen(false);
 });
 
 deleteModal?.addEventListener("click", (event) => {
@@ -1215,15 +1422,21 @@ newChatButton.addEventListener("click", () => {
   setCurrentSession(crypto.randomUUID());
   renderEmpty();
   loadSessions();
-  sidebar.classList.remove("open");
+  setSidebarOpen(false);
   input.focus();
 });
 
-openSidebar.addEventListener("click", () => sidebar.classList.add("open"));
-closeSidebar.addEventListener("click", () => sidebar.classList.remove("open"));
+openSidebar?.addEventListener("click", () => {
+  setSidebarOpen(true);
+});
+
+closeSidebar?.addEventListener("click", () => {
+  setSidebarOpen(false);
+});
 
 setCurrentSession(currentSessionId);
 renderEmpty();
+setSidebarOpen(false);
 loadMessages(currentSessionId);
 loadSessions();
 
@@ -1255,26 +1468,8 @@ themeToggleButton?.addEventListener("click", () => {
   applyTheme(document.documentElement.dataset.theme !== "dark");
 });
 
-// ── Sidebar collapse ─────────────────────────────────────────────────
-const sidebarCollapseButton = document.querySelector("#sidebarCollapseButton");
-const appShell = document.querySelector(".app-shell");
-
-function setSidebarCollapsed(collapsed) {
-  appShell?.classList.toggle("sidebar-collapsed", collapsed);
-  if (sidebarCollapseButton) {
-    sidebarCollapseButton.title = collapsed ? "Mở rộng sidebar" : "Thu gọn sidebar";
-    sidebarCollapseButton.setAttribute("aria-label", sidebarCollapseButton.title);
-  }
-  localStorage.setItem("cookwhat_sidebar_collapsed", collapsed ? "1" : "0");
+function setSidebarOpen(open) {
+  appShell?.classList.toggle("sidebar-open", open);
+  openSidebar?.setAttribute("aria-hidden", open ? "true" : "false");
+  closeSidebar?.setAttribute("aria-hidden", open ? "false" : "true");
 }
-
-// Init collapsed state from localStorage
-(function initSidebar() {
-  const saved = localStorage.getItem("cookwhat_sidebar_collapsed");
-  if (saved === "1") setSidebarCollapsed(true);
-})();
-
-sidebarCollapseButton?.addEventListener("click", () => {
-  const isCollapsed = appShell?.classList.contains("sidebar-collapsed");
-  setSidebarCollapsed(!isCollapsed);
-});

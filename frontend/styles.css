@@ -12,7 +12,7 @@
   --shadow: 0 18px 45px rgba(31, 35, 40, 0.08);
   --mic-active: #e53935;
   --mic-active-dark: #b71c1c;
-  --sidebar-w: 292px;
+  --sidebar-w: clamp(272px, 24vw, 320px);
   --topbar-bg: rgba(246, 243, 238, 0.92);
 }
 
@@ -73,21 +73,16 @@ textarea {
 
 .app-shell {
   display: grid;
-  grid-template-columns: var(--sidebar-w) 1fr;
+  grid-template-columns: 0 1fr;
   min-height: 100vh;
-  transition: grid-template-columns 220ms ease;
+  transition: grid-template-columns 260ms ease;
 }
 
-/* Sidebar collapsed (desktop only) */
-.app-shell.sidebar-collapsed {
-  grid-template-columns: 0px 1fr;
+.app-shell.sidebar-open {
+  grid-template-columns: var(--sidebar-w) 1fr;
 }
 
 .sidebar {
-  position: fixed;
-  top: 0;
-  left: 0;
-
   width: var(--sidebar-w);
   height: 100vh;
 
@@ -100,12 +95,23 @@ textarea {
   color: #f8fafc;
   background: #17211f;
   border-right: 1px solid rgba(255, 255, 255, 0.08);
-  transition: transform 220ms ease;
+  transform: translateX(-100%);
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    transform 260ms ease,
+    opacity 220ms ease,
+    visibility 0s linear 260ms;
 }
 
-.app-shell.sidebar-collapsed .sidebar {
-  transform: translateX(-110%);
-  pointer-events: none;
+.app-shell.sidebar-open .sidebar {
+  transform: translateX(0);
+  opacity: 1;
+  visibility: visible;
+  transition:
+    transform 260ms ease,
+    opacity 220ms ease,
+    visibility 0s linear 0s;
 }
 
 .brand-row {
@@ -114,6 +120,54 @@ textarea {
   justify-content: space-between;
   gap: 12px;
   min-height: 44px;
+}
+
+.sidebar-close-button {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: inline-grid;
+  place-items: center;
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease,
+    visibility 0s linear 180ms;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: scale(0.9);
+}
+
+.app-shell.sidebar-open .sidebar-close-button {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: scale(1);
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease,
+    visibility 0s linear 0s;
+}
+
+#openSidebar {
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease,
+    visibility 0s linear 0s;
+  opacity: 1;
+  visibility: visible;
+  transform: scale(1);
+}
+
+.app-shell.sidebar-open #openSidebar {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: scale(0.9);
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease,
+    visibility 0s linear 180ms;
 }
 
 .brand {
@@ -199,13 +253,11 @@ textarea {
 .chat-panel {
   margin-left: 0;
   grid-column: 2;
-
   height: 100vh;
-
   display: flex;
   flex-direction: column;
-
   min-width: 0;
+  transition: width 260ms ease;
 }
 
 .topbar {
@@ -236,10 +288,6 @@ textarea {
   flex-shrink: 0;
 }
 
-/* Rotate the sidebar collapse icon when sidebar is collapsed */
-.app-shell.sidebar-collapsed #sidebarCollapseIcon {
-  transform: scaleX(-1);
-}
 
 .topbar h1 {
   margin: 0;
@@ -591,14 +639,6 @@ textarea {
   background: rgba(0, 0, 0, 0.08);
 }
 
-.mobile-menu {
-  display: none;
-}
-
-.desktop-hidden {
-  display: none;
-}
-
 /* ===== SESSION ITEM ===== */
 
 .session-item {
@@ -892,26 +932,8 @@ textarea {
 }
 
 @media (max-width: 820px) {
-  .app-shell {
-    grid-template-columns: 1fr;
-  }
-
   .sidebar {
-    position: sticky;
-    inset: 0 auto 0 0;
-    z-index: 10;
-    width: min(88vw, 320px);
-    transform: translateX(-102%);
-    transition: transform 160ms ease;
-  }
-
-  .sidebar.open {
-    transform: translateX(0);
-  }
-
-  .mobile-menu,
-  .desktop-hidden {
-    display: inline-grid;
+    width: var(--sidebar-w);
   }
 
   .topbar {
@@ -1213,7 +1235,6 @@ textarea {
   pointer-events: none;
   z-index: 10;
 }
-
 
 
 

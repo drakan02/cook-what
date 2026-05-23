@@ -18,18 +18,11 @@ from piper.config import SynthesisConfig
 
 from app import db
 from app.config import validate_config
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
-
-from app.schemas import ChatRequest
 from app.prompt_builder import build_prompt
 from app.llm_service import call_llm_stream
 from app.ingredient_extract import extract_ingredients_from_text
 from app.intent_router import detect_intent
-from app.llm_service import LLMServiceError, call_llm
 from app.nutrition_service import lookup_many
-from app.prompt_builder import build_prompt
 from app.schemas import ChatRequest, SessionUpdateRequest, TTSRequest
 from app.vlm_service import VLMServiceError, describe_image
 from src.vectordb import search
@@ -176,6 +169,34 @@ def chat_response(session_id: str, payload: Dict[str, Any], message_type: Option
             payload,
         )
     return JSONResponse(payload)
+
+
+def stream_chat_response(session_id: str, stream, message_type: str = "assistant") -> StreamingResponse:
+    """Stream plain text to client and persist full assistant reply after completion."""
+    def iterator():
+        chunks: List[str] = []
+
+        try:
+            for chunk in stream:
+                if not chunk:
+                    continue
+                chunks.append(chunk)
+                yield chunk
+        except Exception as exc:
+            logger.exception("Streaming chat response failed: %s", exc)
+            error_message = f"\n\nMình đang gặp lỗi khi gọi mô hình AI: {exc}"
+            chunks.append(error_message)
+            yield error_message
+        finally:
+            full_response = "".join(chunks).strip()
+            if full_response:
+                remember_message(session_id, "assistant", full_response, message_type)
+
+    return StreamingResponse(
+        iterator(),
+        media_type="text/plain; charset=utf-8",
+        headers={"X-Session-Id": session_id},
+    )
 
 
 def llm_error_response(session_id: str, exc: Exception) -> JSONResponse:
@@ -500,10 +521,7 @@ def chat(request: ChatRequest):
             user_request=user_message,
             nutrition_context=nutrition_context,
         )
-        return StreamingResponse(
-            call_llm_stream(prompt),
-            media_type="text/plain"
-        )
+        return stream_chat_response(session_id, call_llm_stream(prompt), "recipe_search")
     elif intent == "FOLLOW_UP":
         if not previous_context:
             return chat_response(
@@ -559,10 +577,7 @@ Nếu user hỏi sâu về dinh dưỡng/calo/macro/protein/chất béo/carb c�
 Nếu tất cả món không phù hợp:
 hãy nói rõ lý do và đưa giải pháp thay thế.
 """
-        return StreamingResponse(
-            call_llm_stream(followup_prompt),
-            media_type="text/plain"
-        )
+        return stream_chat_response(session_id, call_llm_stream(followup_prompt), "follow_up")
     elif intent == "RESEARCH":
         if not previous_context:
             debug_log("Recipe search query", user_message)
@@ -592,20 +607,7 @@ hãy nói rõ lý do và đưa giải pháp thay thế.
                 nutrition_context=nutrition_context,
             )
 
-            try:
-                llm_response = call_llm(prompt)
-            except LLMServiceError as exc:
-                return llm_error_response(session_id, exc)
-
-            return chat_response(
-                session_id,
-                {
-                    "type": "recipe_search",
-                    "session_id": session_id,
-                    "ingredients": ingredients,
-                    "response": llm_response,
-                },
-            )
+            return stream_chat_response(session_id, call_llm_stream(prompt), "recipe_search")
 
         new_query = f"{', '.join(previous_ingredients)} {user_message}"
 
@@ -634,10 +636,7 @@ hãy nói rõ lý do và đưa giải pháp thay thế.
             user_request=user_message,
             nutrition_context=nutrition_context,
         )
-        return StreamingResponse(
-            call_llm_stream(prompt),
-            media_type="text/plain"
-        )
+        return stream_chat_response(session_id, call_llm_stream(prompt), "recipe_search")
 
     if intent == "ADD_INGREDIENT":
         if not previous_context:
@@ -682,10 +681,7 @@ hãy nói rõ lý do và đưa giải pháp thay thế.
             user_request=user_message,
             nutrition_context=nutrition_context,
         )
-        return StreamingResponse(
-            call_llm_stream(prompt),
-            media_type="text/plain"
-        )
+        return stream_chat_response(session_id, call_llm_stream(prompt), "recipe_search")
     elif intent == "SMALL_TALK":
         prompt = f"""
 Bạn là CookWhat AI.
@@ -697,10 +693,7 @@ Hãy trả lời thân thiện như chatbot.
 Nếu user cảm ơn thì đáp lại lịch sự.
 Nếu user chào thì chào lại.
 """
-        return StreamingResponse(
-            call_llm_stream(prompt),
-            media_type="text/plain"
-        )
+        return stream_chat_response(session_id, call_llm_stream(prompt), "small_talk")
     return JSONResponse({
         "type": "fallback",
         "response": "Mình chưa hiểu rõ yêu cầu của bạn. Bạn có thể nói rõ hơn không?"
