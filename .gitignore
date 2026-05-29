@@ -9,8 +9,11 @@ data/chunks.jsonl
 data/embeddings/embeddings.npy
 data/embeddings/documents.jsonl
 data/embeddings/ids.json
+data/bm25/bm25_index.pkl
+data/bm25/bm25_meta.json
 
 chroma_db/
 
 __pycache__/
 .env
+.DS_Store

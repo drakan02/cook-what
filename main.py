@@ -25,7 +25,7 @@ from app.intent_router import detect_intent
 from app.nutrition_service import lookup_many
 from app.schemas import ChatRequest, SessionUpdateRequest, TTSRequest
 from app.vlm_service import VLMServiceError, describe_image
-from src.vectordb import search
+from src.retriever import hybrid_search as search
 
 # Setup logging
 logging.basicConfig(
@@ -429,7 +429,7 @@ def run_recipe_search(ingredients: List[str], top_k: int) -> List[Dict[str, Any]
     debug_log("Searching vector DB", query_text)
 
     try:
-        vector_results = search(query=query_text, n_results=top_k)
+        vector_results = search(query=query_text, ingredients=ingredients, top_k=top_k)
     except Exception as exc:
         raise RecipeSearchError(str(exc)) from exc
 
@@ -582,7 +582,7 @@ hãy nói rõ lý do và đưa giải pháp thay thế.
         if not previous_context:
             debug_log("Recipe search query", user_message)
             try:
-                vector_results = search(query=user_message, n_results=request.top_k)
+                vector_results = search(query=user_message, ingredients=[], top_k=request.top_k)
             except Exception as exc:
                 return search_error_response(session_id, exc)
 
@@ -613,7 +613,7 @@ hãy nói rõ lý do và đưa giải pháp thay thế.
 
         debug_log("Research query", new_query)
         try:
-            vector_results = search(query=new_query, n_results=request.top_k)
+            vector_results = search(query=new_query,ingredients=previous_ingredients, top_k=request.top_k)
         except Exception as exc:
             return search_error_response(session_id, exc)
 
